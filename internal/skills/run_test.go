@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -392,4 +393,44 @@ func TestResolveShowsRepoLevelEntries(t *testing.T) {
 	if !strings.Contains(out, "profiles: base") {
 		t.Fatalf("resolve must print the entry profiles:\n%s", out)
 	}
+}
+
+func TestZeroActiveSkillsIsSuccessNoop(t *testing.T) {
+	t.Run("all repo-level skipped", func(t *testing.T) {
+		f := newFixture(t)
+		log := filepath.Join(f.dir, "npx.log")
+		t.Setenv("NPX_LOG", log)
+		f.writeManifest(`
+[[installs]]
+source = "example/x"
+agents = ["codex"]
+skills = ["a"]
+profiles = ["base"]
+`)
+		_, errb, err := f.run(Filters{Command: CmdApply, NonInteractive: true, SkipUnchanged: true})
+		if err != nil {
+			t.Fatalf("zero active must succeed, got %v", err)
+		}
+		if !strings.Contains(errb, "no active entries") {
+			t.Fatalf("want informational notice, got %q", errb)
+		}
+		if got := lineCount(t, log); got != 0 {
+			t.Fatalf("no npx calls expected, got %d", got)
+		}
+		if state := readFileOrEmpty(t, f.state); state != "" {
+			t.Fatalf("no stamp expected, got %q", state)
+		}
+	})
+
+	t.Run("empty installs array", func(t *testing.T) {
+		f := newFixture(t)
+		f.writeManifest("installs = []\n")
+		_, errb, err := f.run(Filters{Command: CmdApply, NonInteractive: true})
+		if err != nil {
+			t.Fatalf("empty manifest must succeed, got %v", err)
+		}
+		if !strings.Contains(errb, "no active entries") {
+			t.Fatalf("want informational notice, got %q", errb)
+		}
+	})
 }

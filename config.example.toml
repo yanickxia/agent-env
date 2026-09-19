@@ -19,14 +19,6 @@
 # 样例中的 token 均为 ${VAR} 占位符。
 #
 # ==================== skills（[[installs]]） ====================
-
-[[installs]]
-source = "microsoft/playwright-cli"
-agents = ["claude-code", "codex", "opencode"]
-skills = ["playwright-cli"]
-profiles = ["global"]
-mode = "symlink"
-
 [[installs]]
 source = "larksuite/cli"
 agents = ["claude-code", "codex", "opencode"]
@@ -54,18 +46,6 @@ mode = "symlink"
 # 依赖 zsh/config.d/common/luma.zsh 导出的 CUSTOM_BASE_URL / CUSTOM_API_KEY /
 # CUSTOM_MODEL_NAME——skill 只能从系统环境变量读配置。
 # 作为 MCP 之外的按需 skill 备胎；当前只同步到 claude-code / codex / opencode。
-[[installs]]
-source = "JochenYang/luma-mcp"
-agents = ["claude-code", "codex", "opencode"]
-skills = ["luma-vision"]
-profiles = ["global"]
-mode = "symlink"
-
-# agent-vision Skill（用户自研 @yanickxia/agent-vision）：与 agent-mcp 里的
-# agent-vision MCP 配套，教 Agent 何时调用 analyze_image / analyze_video。
-# skill 名为 agent-vision（skills CLI 按 SKILL.md frontmatter name 匹配）。
-# 主机制走 MCP 工具（env 来自 MCP 配置）；npx fallback 走 CLI（需 shell env）。
-# 当前只同步到 claude-code / codex / opencode。
 [[installs]]
 source = "yanickxia/agent-vision"
 agents = ["claude-code", "codex", "opencode"]
@@ -142,7 +122,7 @@ agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@playwright/mcp@latest"]
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["browser", "testing"]
 
 # 自托管 Browserless 远程浏览器（办公室/家中两台 NAS 各一套 ghcr.io/browserless/chromium）：
@@ -162,24 +142,14 @@ agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@playwright/mcp@latest", "--cdp-endpoint", "wss://browserless.office.vnet.yanick.site/?token=${BROWSERLESS_TOKEN}&launch=%7B%22headless%22%3Afalse%7D"]
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["browser", "playwright", "remote"]
-
-[[servers]]
-name = "chrome-devtools"
-agents = ["claude-code", "codex", "opencode"]
-type = "stdio"
-command = "npx"
-args = ["-y", "chrome-devtools-mcp@latest"]
-profiles = ["base"]
-tags = ["browser", "devtools", "debugging", "performance"]
-
 [[servers]]
 name = "browseros"
 agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "http://127.0.0.1:9000/mcp"
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["browser"]
 
 [[servers]]
@@ -188,7 +158,7 @@ agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://superops.byted.org/mcp"
 bearer_token_env_var = "OPS_API_TOKEN"
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["internal", "ops"]
 
 # opencode 不在此列：oh-my-opencode-slim 插件会自行注册 remote context7
@@ -196,21 +166,12 @@ tags = ["internal", "ops"]
 # 定义是死配置（2026-09-17 已移除）。其余 host（codex/claude/trae/aiden/pi）
 # 无插件覆盖，仍走本定义。
 [[servers]]
-name = "context7"
-agents = ["claude-code", "codex", "opencode"]
-type = "stdio"
-command = "npx"
-args = ["-y", "@upstash/context7-mcp@latest"]
-profiles = ["global"]
-tags = ["docs", "context", "reference"]
-
-[[servers]]
 name = "bytedcli"
 agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "bytedcli"
 args = ["mcp"]
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["internal", "bytedance", "mcp"]
 [servers.env]
 BYTEDCLI_NO_AUTO_UPGRADE = "1"
@@ -230,7 +191,7 @@ name = "mcphub-search"
 agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://mcphub.inner.yanick.site/mcp/search"
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["search"]
 [servers.headers]
 Authorization = "Bearer ${MCPHUB_TOKEN}"
@@ -241,7 +202,7 @@ name = "mcphub-notes"
 agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://mcphub.vnet.yanick.site/mcp/notes"
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["notes"]
 [servers.headers]
 Authorization = "Bearer ${MCPHUB_TOKEN}"
@@ -253,7 +214,7 @@ name = "mcphub-memos"
 agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://mcphub.vnet.yanick.site/mcp/memos"
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["memos"]
 [servers.headers]
 Authorization = "Bearer ${MCPHUB_TOKEN}"
@@ -275,32 +236,12 @@ Authorization = "Bearer ${MCPHUB_TOKEN}"
 # 32768 是思考模型实测最快的取值；但 73s 仍超过 luma 默认的 60s 超时，会触发超时重试
 # （总耗时翻到 130s+），所以思考模型必须同时把 CUSTOM_TIMEOUT_MS 提到 120s。
 [[servers]]
-name = "luma"
-agents = ["claude-code", "codex", "opencode"]
-type = "stdio"
-command = "npx"
-args = ["-y", "luma-mcp@latest"]
-profiles = ["base"]
-tags = ["vision", "image", "ocr"]
-[servers.env]
-MODEL_PROVIDER = "custom"
-CUSTOM_BASE_URL = "https://ai-proxy.inner.yanick.site/v1"
-CUSTOM_API_KEY = "${LUMA_CUSTOM_API_KEY}"
-CUSTOM_MODEL_NAME = "doubao-seed-2.0-mini-nothink"
-MAX_TOKENS = "32768"
-CUSTOM_TIMEOUT_MS = "120000"
-
-# agent-vision（用户自研 @yanickxia/agent-vision）：MCP server + skill，经 ai-proxy 调用 doubao 视觉模型。
-# 与 luma（image_understand 单图）互补：提供 analyze_image + analyze_video（视频抽帧理解）。
-# 轻量单一 provider：无免费模型列表、无 fallback 竞速、无 watchdog（见 repo README）。
-# npm 包已发布，npx 自动下载；ffmpeg 由 @ffmpeg-installer/ffmpeg 按平台内置，无需本地安装。
-[[servers]]
 name = "agent-vision"
 agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@yanickxia/agent-vision"]
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["vision", "image", "video"]
 [servers.env]
 AGENT_VISION_BASE_URL = "https://ai-proxy.inner.yanick.site/v1"
@@ -336,7 +277,7 @@ name = "clickup"
 agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://mcp.clickup.com/mcp"
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["tasks", "docs", "project-management"]
 [servers.headers]
 Authorization = "Bearer ${CLICKUP_TOKEN}"
@@ -374,7 +315,7 @@ agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "sessions"
 args = ["--mcp"]
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["sessions", "history", "recall", "memory"]
 
 
@@ -384,7 +325,7 @@ agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://ai-proxy.inner.yanick.site/mcp"
 bearer_token_env_var = "AI_PROXY_API_KEY"   # codex/opencode 只认这个；需在 agent 环境里 export
-profiles = ["base"]
+profiles = ["archived"]
 tags = ["vision", "image", "video", "proxy"]
 [servers.headers]
 Authorization = "Bearer ${AI_PROXY_TOKEN}"

@@ -250,11 +250,12 @@ func (r *runner) processManifest(mode string) error {
 		fmt.Fprintf(r.errw, "%s: no .agent-env.toml found from %s up to / and no --profile given; skipped %d repo-level entries (use agent-env init or --profile)\n",
 			config.Prog, start, repoLevelSkips)
 	}
-	if entryCount == 0 {
-		return fmt.Errorf("%s: no active entries found in %s", config.Prog, r.opts.ManifestPath)
-	}
-	if processedCount == 0 {
-		return fmt.Errorf("%s: no entries match the selected filters%s", config.Prog, r.filterDetail())
+	// Zero active entries (empty manifest, or everything filtered/gated out) is
+	// success: print an informational line and stop. Manifest-level protection is
+	// enforced by the parser.
+	if entryCount == 0 || processedCount == 0 {
+		fmt.Fprintf(r.errw, "%s: no active entries; nothing to install%s\n", config.Prog, r.filterDetail())
+		return nil
 	}
 	if r.postInstallFailures > 0 {
 		return fmt.Errorf("%s: %d post_install hook(s) failed", config.Prog, r.postInstallFailures)

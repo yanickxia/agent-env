@@ -577,41 +577,39 @@ func (r *runner) processManifest(mode string) error {
 		}
 	}
 
-	// User-scope writers. codex/trae/opencode re-collect ALL user entries for
-	// the agent (matching agent_user_transform); claude uses the filtered set.
-	if len(c.traeUser) > 0 {
-		if err := r.writeUserTarget(mode, "trae", filepath.Join(r.opts.Home, ".trae", "traecli.yaml"), r.userEntriesAll("trae")); err != nil {
-			return err
-		}
-	}
-	if len(c.codexUser) > 0 {
-		if err := r.writeUserTarget(mode, "codex", filepath.Join(r.opts.Home, ".codex", "config.toml"), r.userEntriesAll("codex")); err != nil {
-			return err
-		}
-	}
-	if len(c.opencodeUser) > 0 {
-		if err := r.writeUserTarget(mode, "opencode", filepath.Join(r.opts.Home, ".config", "opencode", "opencode.jsonc"), r.userEntriesAll("opencode")); err != nil {
-			return err
-		}
-	}
-	if len(c.claudeUser) > 0 {
-		rendered, err := renderClaudeUser(c.claudeUser, r.resolveSecret, func(m string) { fmt.Fprintln(r.errw, m) })
-		if err != nil {
-			return err
-		}
-		if mode == CmdDryRun {
-			fmt.Fprintf(r.out, "# %s: would write Claude user MCP config: %s\n", config.Prog, r.opts.ClaudeJSON)
-			r.printBlock(rendered)
-		} else {
-			if err := r.patchClaude(rendered); err != nil {
-				return err
-			}
-		}
+	// Zero active entries is success, not an error: the writer pipeline below
+	// still runs with empty sets so stale managed blocks / claude mcpServers get
+	// cleaned up. Manifest-level protection lives in the parser.
+	if entryCount == 0 {
+		fmt.Fprintf(r.errw, "%s: no active entries; nothing to install\n", config.Prog)
 	}
 
-	if entryCount == 0 {
-		return fmt.Errorf("%s: no active entries found in %s", config.Prog, r.opts.ManifestPath)
+	// User-scope writers always run so an empty selection cleans up stale
+	// managed blocks; writeUserTarget is a no-op when the target does not exist
+	// and the block is empty.
+	if err := r.writeUserTarget(mode, "trae", filepath.Join(r.opts.Home, ".trae", "traecli.yaml"), r.userEntriesAll("trae")); err != nil {
+		return err
 	}
+	if err := r.writeUserTarget(mode, "codex", filepath.Join(r.opts.Home, ".codex", "config.toml"), r.userEntriesAll("codex")); err != nil {
+		return err
+	}
+	if err := r.writeUserTarget(mode, "opencode", filepath.Join(r.opts.Home, ".config", "opencode", "opencode.jsonc"), r.userEntriesAll("opencode")); err != nil {
+		return err
+	}
+
+	// claude's user target is patched in place and always runs: an empty set
+	// replaces the top-level mcpServers with {} (clearing any stale entries).
+	rendered, err := renderClaudeUser(c.claudeUser, r.resolveSecret, func(m string) { fmt.Fprintln(r.errw, m) })
+	if err != nil {
+		return err
+	}
+	if mode == CmdDryRun {
+		fmt.Fprintf(r.out, "# %s: would write Claude user MCP config: %s\n", config.Prog, r.opts.ClaudeJSON)
+		r.printBlock(rendered)
+	} else if err := r.patchClaude(rendered); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -677,8 +675,10 @@ func (r *runner) renderUserBlock(agent string, entries []config.Server) (string,
 }
 
 func (r *runner) writeUserTarget(mode, agent, target string, entries []config.Server) error {
+	existed := false
 	input := ""
 	if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+		existed = true
 		input = readFileOrEmpty(target)
 	}
 	block := ""
@@ -700,11 +700,15 @@ func (r *runner) writeUserTarget(mode, agent, target string, entries []config.Se
 		return nil
 	}
 
+	// Nothing to clean up and nothing to write: don't create an empty target.
+	if !existed && block == "" {
+		return nil
+	}
+
 	transformed, err := agentUserTransform(input, agent, block)
 	if err != nil {
 		return err
 	}
-	existed := fileExists(target)
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("%s: cannot create %s: %v", config.Prog, filepath.Dir(target), err)
 	}
@@ -756,9 +760,4 @@ func userTargetLabel(agent string) string {
 	default:
 		return agent + " user"
 	}
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

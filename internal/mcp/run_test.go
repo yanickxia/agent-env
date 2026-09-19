@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -297,14 +299,20 @@ profiles = ["global"]
 	assertContains(t, errb, "unsupported agent 'pi' for server 'piserver'; skipped")
 }
 
-func TestNoActiveEntriesError(t *testing.T) {
+func TestNoActiveEntriesIsSuccess(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("")
 	f.writeManifest("[[servers]]\nname = \"a\"\nprofiles = [\"base\"]\n")
-	_, _, err := f.run(Filters{Command: CmdDryRun, Names: []string{"missing"}, NonInteractive: true})
-	if err == nil || !strings.Contains(err.Error(), "no active entries found") {
-		t.Fatalf("want no-active-entries error, got %v", err)
+	out, errb, err := f.run(Filters{Command: CmdDryRun, Names: []string{"missing"}, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("zero active entries must succeed, got %v", err)
 	}
+	if !strings.Contains(errb, "no active entries") {
+		t.Fatalf("want informational notice, got %q", errb)
+	}
+	// dry-run still emits the empty-set would-write pipeline.
+	assertContains(t, out, "would write Claude user MCP config")
+	assertContains(t, out, "would write Codex user MCP config")
 }
 
 // --- claude alias canonicalization ------------------------------------------
@@ -353,4 +361,70 @@ profiles = ["base"]
 		t.Fatalf("--agent claude and --agent claude-code must match:\n--- claude-code ---\n%s\n--- claude ---\n%s", outCC, outC)
 	}
 	assertContains(t, outCC, "claude mcp add c1")
+}
+
+// A zero-active run must still execute the writer pipeline so stale managed
+// blocks and claude mcpServers are cleaned up.
+func TestZeroActiveCleansUpWriters(t *testing.T) {
+	f := newFixture(t)
+	f.writeSecrets("")
+	f.writeManifest(`
+[[servers]]
+name = "archived-srv"
+agents = ["codex", "claude-code"]
+type = "stdio"
+command = "npx"
+profiles = ["archived"]
+`)
+	codex := filepath.Join(f.home, ".codex", "config.toml")
+	f.write(codex, "model = \"x\"\n\n# AGENT_MCP_CODEX_MANAGED_BEGIN\n[mcp_servers.context7]\ncommand = \"npx\"\n\n# AGENT_MCP_CODEX_MANAGED_END\n")
+	f.write(f.claude, `{"projects":{"p":{"a":1}},"mcpServers":{"context7":{"type":"stdio"}},"other":42}`)
+
+	out, errb, err := f.run(Filters{Command: CmdApply, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("zero-active apply must succeed, got %v", err)
+	}
+	if !strings.Contains(errb, "no active entries") {
+		t.Fatalf("want informational notice, got %q", errb)
+	}
+	if !strings.Contains(out, "patched mcpServers") {
+		t.Fatalf("claude patch must run even with zero entries:\n%s", out)
+	}
+
+	// claude mcpServers cleared, runtime keys preserved.
+	var claude map[string]any
+	if err := json.Unmarshal([]byte(readFile(t, f.claude)), &claude); err != nil {
+		t.Fatal(err)
+	}
+	mcp, _ := claude["mcpServers"].(map[string]any)
+	if len(mcp) != 0 {
+		t.Fatalf("claude mcpServers must be empty, got %#v", mcp)
+	}
+	if claude["other"] != float64(42) {
+		t.Fatalf("claude runtime keys must be preserved: %#v", claude)
+	}
+
+	// codex managed block removed entirely, outside bytes preserved.
+	content := readFile(t, codex)
+	assertNotContains(t, content, "# AGENT_MCP_CODEX_MANAGED_BEGIN")
+	assertNotContains(t, content, "# AGENT_MCP_CODEX_MANAGED_END")
+	assertNotContains(t, content, "context7")
+	assertContains(t, content, `model = "x"`)
+
+	// Missing trae/opencode targets are not created.
+	if _, err := os.Stat(filepath.Join(f.home, ".trae", "traecli.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("trae target must not be created for an empty set")
+	}
+	if _, err := os.Stat(filepath.Join(f.home, ".config", "opencode", "opencode.jsonc")); !os.IsNotExist(err) {
+		t.Fatalf("opencode target must not be created for an empty set")
+	}
+
+	// dry-run emits the empty-set would-write pipeline.
+	out2, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	assertContains(t, out2, "would write Codex user MCP config")
+	assertContains(t, out2, "would write Claude user MCP config")
+	assertNotContains(t, out2, "context7")
 }

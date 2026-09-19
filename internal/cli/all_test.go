@@ -256,3 +256,33 @@ func TestAllInOneApplyRequiresNonInteractive(t *testing.T) {
 		t.Fatalf("want non-interactive requirement, got %v", err)
 	}
 }
+
+func TestAllInOneZeroActiveSucceeds(t *testing.T) {
+	f := newAllFixture(t)
+	f.writeManifest(t, `
+[[installs]]
+source = "example/s"
+agents = ["codex"]
+skills = ["a"]
+profiles = ["base"]
+
+[[servers]]
+name = "s"
+agents = ["codex"]
+type = "stdio"
+command = "npx"
+profiles = ["base"]
+`)
+	sf := sharedFilters{command: skills.CmdApply, nonInteractive: true}
+	sErr, mErr := runAll(sf, f.sOpts, f.mOpts)
+	if sErr != nil || mErr != nil {
+		t.Fatalf("zero-active all-in-one must succeed: skills=%v mcp=%v", sErr, mErr)
+	}
+	out := f.out.String()
+	if !strings.Contains(out, "=== skills ===") || !strings.Contains(out, "=== mcp ===") {
+		t.Fatalf("both domains must run:\n%s", out)
+	}
+	if !strings.Contains(f.errb.String(), "no active entries") {
+		t.Fatalf("want informational notice, got %q", f.errb.String())
+	}
+}
