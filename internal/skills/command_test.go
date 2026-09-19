@@ -35,22 +35,22 @@ func TestBuildCommands(t *testing.T) {
 		wantEnv     []string
 	}{
 		{
-			name:    "user symlink default",
-			entry:   config.Install{Source: "example/x", Scope: "user", Mode: "symlink"},
+			name:    "global symlink default",
+			entry:   config.Install{Source: "example/x", Global: true, Mode: "symlink"},
 			agents:  []string{"codex"},
 			skills:  []string{"a"},
 			wantNpx: []string{"npx", "--yes", "skills", "add", "example/x", "-g", "-a", "codex", "--skill", "a", "-y"},
 		},
 		{
-			name:    "project copy",
-			entry:   config.Install{Source: "example/x", Scope: "project", Mode: "copy"},
+			name:    "repo-level copy",
+			entry:   config.Install{Source: "example/x", Mode: "copy"},
 			agents:  []string{"codex"},
 			skills:  []string{"a"},
 			wantNpx: []string{"npx", "--yes", "skills", "add", "example/x", "--copy", "-a", "codex", "--skill", "a", "-y"},
 		},
 		{
 			name:    "wildcard passes through",
-			entry:   config.Install{Source: "example/x", Scope: "user", Mode: "symlink"},
+			entry:   config.Install{Source: "example/x", Global: true, Mode: "symlink"},
 			agents:  []string{"codex"},
 			skills:  []string{"*"},
 			wantNpx: []string{"npx", "--yes", "skills", "add", "example/x", "-g", "-a", "codex", "--skill", "*", "-y"},
@@ -58,7 +58,7 @@ func TestBuildCommands(t *testing.T) {
 		{
 			name: "env args preserved",
 			entry: config.Install{
-				Source: "example/x", Scope: "user", Mode: "symlink",
+				Source: "example/x", Global: true, Mode: "symlink",
 				Env: []config.EnvVar{{Key: "K", Value: "V"}},
 			},
 			agents:  []string{"codex"},
@@ -68,7 +68,7 @@ func TestBuildCommands(t *testing.T) {
 		},
 		{
 			name:      "aiden uses its own CLI",
-			entry:     config.Install{Source: "example/x", Scope: "user", Mode: "symlink"},
+			entry:     config.Install{Source: "example/x", Global: true, Mode: "symlink"},
 			agents:    []string{"aiden", "codex"},
 			skills:    []string{"a"},
 			wantNpx:   []string{"npx", "--yes", "skills", "add", "example/x", "-g", "-a", "codex", "--skill", "a", "-y"},
@@ -76,7 +76,7 @@ func TestBuildCommands(t *testing.T) {
 		},
 		{
 			name:        "claude-code skipped when store is a symlink",
-			entry:       config.Install{Source: "example/x", Scope: "user", Mode: "symlink"},
+			entry:       config.Install{Source: "example/x", Global: true, Mode: "symlink"},
 			agents:      []string{"claude-code", "codex"},
 			skills:      []string{"a"},
 			symlink:     true,
@@ -117,7 +117,7 @@ func TestBuildCommands(t *testing.T) {
 func TestBuildCommandsInvalidMode(t *testing.T) {
 	var out, errb bytes.Buffer
 	r := &runner{out: &out, errw: &errb, opts: Options{Home: "/home/u"}}
-	_, err := r.buildCommands("example/x", config.Install{Source: "example/x", Scope: "user", Mode: "bogus"}, []string{"codex"}, nil)
+	_, err := r.buildCommands("example/x", config.Install{Source: "example/x", Global: true, Mode: "bogus"}, []string{"codex"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "invalid mode 'bogus'") {
 		t.Fatalf("want invalid mode error, got %v", err)
 	}
@@ -142,9 +142,9 @@ func TestDryRunClaudeSymlinkViaTempDir(t *testing.T) {
 source = "example/x"
 agents = ["claude-code", "codex"]
 skills = ["lane"]
-scope = "user"
+profiles = ["global"]
 `)
-	out, errb, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"user"}, ScopeSeen: true, NonInteractive: true})
+	out, errb, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}

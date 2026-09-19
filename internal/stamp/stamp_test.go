@@ -29,10 +29,11 @@ func TestSignatureMatchesRealStateFile(t *testing.T) {
 
 	checked := 0
 	for _, e := range entries {
-		if e.Scope != "user" {
+		if !e.Global {
 			continue
 		}
-		sig := Signature(e.Source, e.AgentsRaw, e.SkillsRaw, e.Mode, e.Scope, e.Installer, e.EnvRaw, "", "")
+		// Global entries derive the historical "user" scope in the signature.
+		sig := Signature(e.Source, e.AgentsRaw, e.SkillsRaw, e.Mode, "user", e.Installer, e.EnvRaw, "", "")
 		got, ok := store.Lookup(e.Source, "user")
 		if !ok {
 			t.Errorf("no stamp row for %s", e.Source)

@@ -21,20 +21,6 @@ func splitTrimNonEmpty(raw string) []string {
 	return out
 }
 
-// scopeMatches reports whether scope passes the CLI scope filter. An empty
-// filter matches everything.
-func (r *runner) scopeMatches(scope string) bool {
-	if len(r.f.Scopes) == 0 {
-		return true
-	}
-	for _, f := range r.f.Scopes {
-		if scope == f {
-			return true
-		}
-	}
-	return false
-}
-
 // profilesIntersect reports whether any profile in the comma-joined left also
 // appears in the comma-joined right.
 func profilesIntersect(left, right string) bool {
@@ -54,11 +40,10 @@ func profilesIntersect(left, right string) bool {
 	return false
 }
 
-// selectEntryAgents mirrors select_entry_agents: the CLI --agent filter is
-// applied first, then the repo config narrows project-scope entries only.
-// It returns the final comma-joined agent list and ok=false when the entry
-// should be skipped.
-func (r *runner) selectEntryAgents(scope, agentsRaw string) (string, bool) {
+// selectEntryAgents applies the CLI --agent filter first, then the repo config
+// narrows repo-level (non-global) entries only. It returns the final
+// comma-joined agent list and ok=false when the entry should be skipped.
+func (r *runner) selectEntryAgents(global bool, agentsRaw string) (string, bool) {
 	if strings.TrimSpace(agentsRaw) == "" {
 		if len(r.f.Agents) > 0 {
 			return "", false
@@ -84,7 +69,7 @@ func (r *runner) selectEntryAgents(scope, agentsRaw string) (string, bool) {
 		agents = kept
 	}
 
-	if scope == "project" && r.repo != nil && len(r.repo.Agents) > 0 {
+	if !global && r.repo != nil && len(r.repo.Agents) > 0 {
 		repoSet := map[string]bool{}
 		for _, tok := range r.repo.Agents {
 			repoSet[tok] = true

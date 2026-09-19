@@ -15,9 +15,9 @@ type KV struct {
 	Value string
 }
 
-// Server is one normalized [[servers]] row: a server entry expanded to exactly
-// one scope. Entries that declare multiple scopes produce multiple rows, in
-// declaration order.
+// Server is one normalized [[servers]] entry. Global means the entry's
+// profiles contain the reserved keyword "global" (formerly scope = "user");
+// otherwise it is repo-level and gated by the profile selection.
 type Server struct {
 	Name              string
 	Type              string
@@ -26,12 +26,12 @@ type Server struct {
 	Args              []string
 	Agents            []string
 	Profiles          []string
+	Global            bool
 	Env               []KV
 	Headers           []KV
 	EnvVars           []string
 	BearerTokenEnvVar string
 	StartupTimeoutSec *int
-	Scope             string
 }
 
 // SecretResolver resolves a ${VAR} placeholder: secrets.toml (exact, then
@@ -75,11 +75,11 @@ func ParseServers(path string, resolve SecretResolver) ([]Server, error) {
 		if i < len(orders) {
 			order = orders[i]
 		}
-		rows, err := parseServerEntry(entry, path, order, resolve)
+		row, err := parseServerEntry(entry, path, order, resolve)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, rows...)
+		out = append(out, row)
 	}
 	return out, nil
 }
@@ -130,94 +130,98 @@ func serverTableOrders(md toml.MetaData) []tableOrder {
 	return orders
 }
 
-func parseServerEntry(entry map[string]any, manifestPath string, order tableOrder, resolve SecretResolver) ([]Server, error) {
+func parseServerEntry(entry map[string]any, manifestPath string, order tableOrder, resolve SecretResolver) (Server, error) {
 	rawName, _ := entry["name"].(string)
 	name := strings.TrimSpace(rawName)
 	if rawName == "" || name == "" {
-		return nil, fmt.Errorf("%s: each server entry must include a non-empty \"name\": %s", Prog, manifestPath)
+		return Server{}, fmt.Errorf("%s: each server entry must include a non-empty \"name\": %s", Prog, manifestPath)
+	}
+
+	if _, ok := entry["scope"]; ok {
+		return Server{}, fmt.Errorf("%s: \"scope\" was removed; use profiles = [\"global\"] for a global (all-repo) entry, or profiles = [\"<tag>\", ...] for a repo-level entry in server: %s", Prog, name)
 	}
 
 	agents, err := stringListField(entry, "agents", name)
 	if err != nil {
-		return nil, err
+		return Server{}, err
 	}
 	profiles, err := stringListField(entry, "profiles", name)
 	if err != nil {
-		return nil, err
+		return Server{}, err
+	}
+	if len(trimNonEmpty(profiles)) == 0 {
+		return Server{}, fmt.Errorf("%s: \"profiles\" is required; add profiles = [\"global\"] for a global (all-repo) entry, or profiles = [\"<tag>\", ...] for a repo-level entry in server: %s", Prog, name)
 	}
 	command, err := optionalStringField(entry, "command", name)
 	if err != nil {
-		return nil, err
+		return Server{}, err
 	}
 	serverType, err := optionalStringField(entry, "type", name)
 	if err != nil {
-		return nil, err
+		return Server{}, err
 	}
 	url, err := optionalStringField(entry, "url", name)
 	if err != nil {
-		return nil, err
+		return Server{}, err
 	}
 	args, err := stringListField(entry, "args", name)
 	if err != nil {
-		return nil, err
+		return Server{}, err
 	}
 	envVars, err := stringListField(entry, "env_vars", name)
 	if err != nil {
-		return nil, err
+		return Server{}, err
 	}
 	envMap, err := stringMapField(entry, "env", name)
 	if err != nil {
-		return nil, err
+		return Server{}, err
 	}
 	headersMap, err := stringMapField(entry, "headers", name)
 	if err != nil {
-		return nil, err
+		return Server{}, err
 	}
 	bearer, err := optionalStringField(entry, "bearer_token_env_var", name)
 	if err != nil {
-		return nil, err
+		return Server{}, err
 	}
 
 	var timeout *int
 	if tv, ok := entry["startup_timeout_sec"]; ok && tv != nil {
 		n, isInt := tv.(int64)
 		if !isInt {
-			return nil, fmt.Errorf("%s: \"startup_timeout_sec\" must be an int in server: %s", Prog, name)
+			return Server{}, fmt.Errorf("%s: \"startup_timeout_sec\" must be an int in server: %s", Prog, name)
 		}
 		v := int(n)
 		timeout = &v
 	}
 
-	scopes, err := expandServerScopes(entry["scope"], name)
-	if err != nil {
-		return nil, err
+	normalizedProfiles := trimNonEmpty(profiles)
+	global := false
+	for _, p := range normalizedProfiles {
+		if p == GlobalProfile {
+			global = true
+			break
+		}
 	}
 
 	environ := orderedKV(envMap, order.env)
 	headers := orderedKV(headersMap, order.headers)
 
-	base := Server{
+	return Server{
 		Name:              name,
 		Type:              strings.TrimSpace(serverType),
 		Command:           strings.TrimSpace(command),
 		URL:               expandPlaceholders(strings.TrimSpace(url), resolve),
 		Args:              expandAll(args, resolve),
 		Agents:            trimNonEmpty(agents),
-		Profiles:          trimNonEmpty(profiles),
+		Profiles:          normalizedProfiles,
+		Global:            global,
 		Env:               expandKV(environ, resolve),
 		Headers:           expandKV(headers, resolve),
 		EnvVars:           envVars,
 		BearerTokenEnvVar: strings.TrimSpace(bearer),
 		StartupTimeoutSec: timeout,
-	}
-
-	rows := make([]Server, 0, len(scopes))
-	for _, sc := range scopes {
-		row := base
-		row.Scope = sc
-		rows = append(rows, row)
-	}
-	return rows, nil
+	}, nil
 }
 
 func stringListField(entry map[string]any, field, name string) ([]string, error) {
@@ -271,54 +275,6 @@ func stringMapField(entry map[string]any, field, name string) (map[string]any, e
 		}
 	}
 	return m, nil
-}
-
-func expandServerScopes(raw any, name string) ([]string, error) {
-	if raw == nil {
-		return nil, fmt.Errorf("%s: each server entry must declare \"scope\" as \"user\" or \"project\": %s", Prog, name)
-	}
-	var scopes []string
-	switch t := raw.(type) {
-	case string:
-		scopes = []string{strings.TrimSpace(t)}
-	case []any:
-		if len(t) == 0 {
-			return nil, fmt.Errorf("%s: \"scope\" array must not be empty in server: %s", Prog, name)
-		}
-		for _, item := range t {
-			s, isStr := item.(string)
-			if !isStr {
-				return nil, fmt.Errorf("%s: \"scope\" must be a string or an array of strings in server: %s", Prog, name)
-			}
-			scopes = append(scopes, strings.TrimSpace(s))
-		}
-	default:
-		return nil, fmt.Errorf("%s: \"scope\" must be a string or an array of strings in server: %s", Prog, name)
-	}
-
-	for _, s := range scopes {
-		if s == "user" || s == "project" {
-			continue
-		}
-		hint := ""
-		if s == "global" {
-			hint = " (use \"user\")"
-		} else if s == "local" {
-			hint = " (use \"project\")"
-		}
-		return nil, fmt.Errorf("%s: scope must be \"user\" or \"project\", got \"%s\"%s in server: %s", Prog, s, hint, name)
-	}
-
-	seen := map[string]bool{}
-	out := []string{}
-	for _, s := range scopes {
-		if seen[s] {
-			continue
-		}
-		seen[s] = true
-		out = append(out, s)
-	}
-	return out, nil
 }
 
 // orderedKV renders a TOML table in document order, appending any keys the

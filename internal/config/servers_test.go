@@ -35,7 +35,7 @@ func TestParseServersValid(t *testing.T) {
 	body := `
 [[installs]]
 source = "ignored/skills-entry"
-scope = "user"
+profiles = ["global"]
 
 [[servers]]
 name = "srv-full"
@@ -43,8 +43,7 @@ agents = ["codex", "claude"]
 type = "stdio"
 command = "npx"
 args = ["-y", "fake@latest", "${TOKEN}"]
-scope = ["project", "user", "project"]
-profiles = ["base", "ark-mlops"]
+profiles = ["global", "base", "ark-mlops"]
 env_vars = ["A", "B"]
 startup_timeout_sec = 20
 [servers.env]
@@ -58,7 +57,7 @@ name = "srv-http"
 agents = ["trae"]
 type = "streamable-http"
 url = "https://example.test/${PATH_TOKEN}"
-scope = "project"
+profiles = ["base"]
 bearer_token_env_var = "BT"
 `
 	secrets := map[string]string{"secret_a": "sekret", "path_token": "ptok"}
@@ -67,13 +66,16 @@ bearer_token_env_var = "BT"
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// installs ignored; 2 scopes for srv-full + 1 for srv-http = 3 rows.
-	if len(rows) != 3 {
-		t.Fatalf("want 3 rows, got %d: %+v", len(rows), rows)
+	// installs ignored; one row per server entry (no scope expansion).
+	if len(rows) != 2 {
+		t.Fatalf("want 2 rows, got %d: %+v", len(rows), rows)
 	}
 	full := rows[0]
-	if full.Name != "srv-full" || full.Scope != "project" || rows[1].Scope != "user" {
-		t.Fatalf("scope expansion/dedupe wrong: %+v / %+v", rows[0], rows[1])
+	if full.Name != "srv-full" || !full.Global {
+		t.Fatalf("global detection wrong: %+v", full)
+	}
+	if got := strings.Join(full.Profiles, ","); got != "global,base,ark-mlops" {
+		t.Fatalf("profiles = %q", got)
 	}
 	if got := strings.Join(full.Args, ","); got != "-y,fake@latest,envtok" {
 		t.Fatalf("args expansion = %q", got)
@@ -91,7 +93,10 @@ bearer_token_env_var = "BT"
 	if full.StartupTimeoutSec == nil || *full.StartupTimeoutSec != 20 {
 		t.Fatalf("timeout = %v", full.StartupTimeoutSec)
 	}
-	http := rows[2]
+	http := rows[1]
+	if http.Global {
+		t.Fatalf("srv-http must be repo-level: %+v", http)
+	}
 	if http.URL != "https://example.test/ptok" || http.BearerTokenEnvVar != "BT" {
 		t.Fatalf("http row = %+v", http)
 	}
@@ -106,24 +111,22 @@ func TestParseServersErrors(t *testing.T) {
 		body string
 		want string
 	}{
-		{"missing name", "[[servers]]\nscope = \"user\"\n", `must include a non-empty "name"`},
-		{"missing scope", "[[servers]]\nname = \"s\"\n", `must declare "scope"`},
-		{"empty scope array", "[[servers]]\nname = \"s\"\nscope = []\n", `"scope" array must not be empty`},
-		{"scope global", "[[servers]]\nname = \"s\"\nscope = \"global\"\n", `got "global" (use "user")`},
-		{"scope local", "[[servers]]\nname = \"s\"\nscope = \"local\"\n", `(use "project")`},
-		{"scope wrong type", "[[servers]]\nname = \"s\"\nscope = [1]\n", `"scope" must be a string or an array of strings`},
-		{"agents not array", "[[servers]]\nname = \"s\"\nscope = \"user\"\nagents = \"codex\"\n", `"agents" must be a string array`},
-		{"profiles not array", "[[servers]]\nname = \"s\"\nscope = \"user\"\nprofiles = \"base\"\n", `"profiles" must be a string array`},
-		{"type wrong type", "[[servers]]\nname = \"s\"\nscope = \"user\"\ntype = 3\n", `"type" must be a string`},
-		{"command wrong type", "[[servers]]\nname = \"s\"\nscope = \"user\"\ncommand = 3\n", `"command" must be a string`},
-		{"url wrong type", "[[servers]]\nname = \"s\"\nscope = \"user\"\nurl = 3\n", `"url" must be a string`},
-		{"args wrong type", "[[servers]]\nname = \"s\"\nscope = \"user\"\nargs = 3\n", `"args" must be a string array`},
-		{"env_vars wrong type", "[[servers]]\nname = \"s\"\nscope = \"user\"\nenv_vars = [1]\n", `"env_vars" must be a string array`},
-		{"env wrong type", "[[servers]]\nname = \"s\"\nscope = \"user\"\nenv = [1]\n", `"env" must be a string map`},
-		{"env value not string", "[[servers]]\nname = \"s\"\nscope = \"user\"\n[servers.env]\nN = 1\n", `"env" must be a string map`},
-		{"headers wrong type", "[[servers]]\nname = \"s\"\nscope = \"user\"\nheaders = [1]\n", `"headers" must be a string map`},
-		{"bearer wrong type", "[[servers]]\nname = \"s\"\nscope = \"user\"\nbearer_token_env_var = 1\n", `"bearer_token_env_var" must be a string`},
-		{"timeout wrong type", "[[servers]]\nname = \"s\"\nscope = \"user\"\nstartup_timeout_sec = \"x\"\n", `"startup_timeout_sec" must be an int`},
+		{"missing name", "[[servers]]\nprofiles = [\"base\"]\n", `must include a non-empty "name"`},
+		{"scope removed", "[[servers]]\nname = \"s\"\nscope = [\"project\"]\nprofiles = [\"base\"]\n", `"scope" was removed`},
+		{"profiles missing", "[[servers]]\nname = \"s\"\n", `"profiles" is required`},
+		{"profiles empty", "[[servers]]\nname = \"s\"\nprofiles = []\n", `"profiles" is required`},
+		{"agents not array", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\nagents = \"codex\"\n", `"agents" must be a string array`},
+		{"profiles not array", "[[servers]]\nname = \"s\"\nprofiles = \"base\"\n", `"profiles" must be a string array`},
+		{"type wrong type", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\ntype = 3\n", `"type" must be a string`},
+		{"command wrong type", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\ncommand = 3\n", `"command" must be a string`},
+		{"url wrong type", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\nurl = 3\n", `"url" must be a string`},
+		{"args wrong type", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\nargs = 3\n", `"args" must be a string array`},
+		{"env_vars wrong type", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\nenv_vars = [1]\n", `"env_vars" must be a string array`},
+		{"env wrong type", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\nenv = [1]\n", `"env" must be a string map`},
+		{"env value not string", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\n[servers.env]\nN = 1\n", `"env" must be a string map`},
+		{"headers wrong type", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\nheaders = [1]\n", `"headers" must be a string map`},
+		{"bearer wrong type", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\nbearer_token_env_var = 1\n", `"bearer_token_env_var" must be a string`},
+		{"timeout wrong type", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\nstartup_timeout_sec = \"x\"\n", `"startup_timeout_sec" must be an int`},
 		{"entry not table", "servers = [\"x\"]\n", `each server entry must be a table`},
 		{"servers missing", "[other]\nx = 1\n", `must contain a "servers" array`},
 		{"servers wrong type", "servers = \"x\"\n", `must contain a "servers" array`},
@@ -145,7 +148,7 @@ func TestParseServersMissingVarBecomesEmpty(t *testing.T) {
 	rows, err := parseServersBody(t, `
 [[servers]]
 name = "s"
-scope = "user"
+profiles = ["global"]
 args = ["${NOPE}"]
 url = "x"
 `, nil, nil)
@@ -157,13 +160,12 @@ url = "x"
 	}
 }
 
-// Manifest profiles are NOT kebab-validated (matching the zsh parser); only
-// the CLI --profile filter enforces kebab-case.
+// Manifest profiles are NOT kebab-validated (matching the historical parser);
+// only the CLI --profile filter enforces kebab-case.
 func TestParseServersProfilesNotKebabValidated(t *testing.T) {
 	rows, err := parseServersBody(t, `
 [[servers]]
 name = "s"
-scope = "user"
 profiles = ["Base_ML"]
 `, nil, nil)
 	if err != nil {

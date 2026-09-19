@@ -11,7 +11,6 @@ import (
 // mcpFilterFlags collects the raw mcp flag values. --name is repeatable and
 // literal; --names is its comma-separated alias.
 type mcpFilterFlags struct {
-	scopes   []string
 	agents   []string
 	name     []string
 	names    []string
@@ -25,7 +24,6 @@ type mcpFilterFlags struct {
 
 func addMCPFilterFlags(cmd *cobra.Command, f *mcpFilterFlags) {
 	fl := cmd.Flags()
-	fl.StringArrayVar(&f.scopes, "scope", nil, "user, project, or all (repeatable/comma-separated)")
 	fl.StringArrayVar(&f.agents, "agent", nil, "only sync for AGENT (repeatable/comma-separated)")
 	fl.StringArrayVar(&f.name, "name", nil, "only sync the named MCP server (repeatable)")
 	fl.StringArrayVar(&f.names, "names", nil, "comma-separated alias for --name")
@@ -43,12 +41,10 @@ func (f *mcpFilterFlags) toFilters(cmd *cobra.Command, command string) mcp.Filte
 		NonInteractive: f.noInter || f.yes || f.noInter2,
 		Interactive:    f.interact,
 	}
-	fl.Scopes = flattenComma(f.scopes)
 	fl.Agents = flattenComma(f.agents)
 	fl.Names = append(append([]string{}, f.name...), flattenComma(f.names)...)
 	fl.Profiles = append(flattenComma(f.profile), flattenComma(f.profiles)...)
 
-	fl.ScopeSeen = cmd.Flags().Changed("scope")
 	fl.AgentSeen = cmd.Flags().Changed("agent")
 	fl.ProfileSeen = cmd.Flags().Changed("profile") || cmd.Flags().Changed("profiles")
 	return fl
@@ -99,8 +95,8 @@ func newMCPUpsertStdinCmd() *cobra.Command {
 		Use:   "upsert-stdin",
 		Short: "Upsert an agent's user-level marker block from stdin to stdout (chezmoi modify_)",
 		Long: "Read a base file from stdin and print it with --agent's user-level marker\n" +
-			"block upserted. Never touches the filesystem; `apply --scope user` uses the\n" +
-			"same core, so their outputs are byte-identical.",
+			"block upserted. Never touches the filesystem; the user-target writers share\n" +
+			"the same core, so their outputs are byte-identical.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := resolveMCPOptions()

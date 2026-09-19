@@ -5,76 +5,95 @@ import (
 	"testing"
 )
 
-const projectEntry = `
+// repoEntry is a repo-level entry (no global keyword): gated by the selection.
+const repoEntry = `
 [[installs]]
 source = "example/ark"
 agents = ["codex"]
 skills = ["mlops-lane"]
-scope = "project"
 profiles = ["base"]
+`
+
+// globalEntry installs unconditionally.
+const globalEntry = `
+[[installs]]
+source = "example/global"
+agents = ["codex"]
+skills = ["lane"]
+profiles = ["global"]
 `
 
 // --- gating ------------------------------------------------------------------
 
-func TestGatingProjectApplyNeedsSelection(t *testing.T) {
+func TestNoSelectionInstallsGlobalAndSkipsRepoLevel(t *testing.T) {
 	for _, command := range []string{CmdApply, CmdDryRun} {
 		t.Run(command, func(t *testing.T) {
 			f := newFixture(t)
-			f.writeManifest(projectEntry)
+			f.writeManifest(globalEntry + repoEntry)
 
-			_, _, err := f.run(Filters{
-				Command:        command,
-				Scopes:         []string{"project"},
-				ScopeSeen:      true,
-				NonInteractive: true,
-			})
-			if err == nil || !strings.Contains(err.Error(), "no .agent-env.toml") {
-				t.Fatalf("want project gating error, got %v", err)
+			out, errb, err := f.run(Filters{Command: command, NonInteractive: true})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
-			if !strings.Contains(err.Error(), "agent-env init <profile>") {
-				t.Fatalf("gating hint must point at agent-env init, got %v", err)
+			if !strings.Contains(out, "example/global") {
+				t.Fatalf("global entry must install without selection:\n%s", out)
+			}
+			if strings.Contains(out, "example/ark") {
+				t.Fatalf("repo-level entry must be skipped without selection:\n%s", out)
+			}
+			if !strings.Contains(errb, "skipped 1 repo-level entries") {
+				t.Fatalf("want skip notice, got %q", errb)
+			}
+			if !strings.Contains(errb, "agent-env init or --profile") {
+				t.Fatalf("skip notice must point at agent-env init, got %q", errb)
 			}
 		})
 	}
 }
 
-func TestGatingUnfilteredRunSkipsUnprofiledProjectEntries(t *testing.T) {
+func TestMixedGlobalAndTagIsGlobal(t *testing.T) {
 	f := newFixture(t)
 	f.writeManifest(`
 [[installs]]
-source = "example/user"
+source = "example/mixed"
 agents = ["codex"]
 skills = ["lane"]
-scope = "user"
-
-[[installs]]
-source = "example/noprofile"
-agents = ["codex"]
-skills = ["lane"]
-scope = "project"
+profiles = ["global", "base"]
 `)
+	// No repo config: still installs, and the "base" tag does not gate it.
 	out, errb, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "example/user") {
-		t.Fatalf("user entry missing from output: %s", out)
+	if !strings.Contains(out, "example/mixed") {
+		t.Fatalf("mixed entry must be global:\n%s", out)
 	}
-	if strings.Contains(out, "example/noprofile") {
-		t.Fatalf("unprofiled project entry must be skipped: %s", out)
+	if strings.Contains(errb, "skipped") {
+		t.Fatalf("mixed entry must not be skipped: %q", errb)
 	}
-	if !strings.Contains(errb, "skipped 1 project entries") {
-		t.Fatalf("want skip notice, got %q", errb)
+	// And it still installs when a selection excludes "base".
+	f2 := newFixture(t)
+	f2.writeRepo(`profiles = ["frontend"]`)
+	f2.writeManifest(`
+[[installs]]
+source = "example/mixed"
+agents = ["codex"]
+skills = ["lane"]
+profiles = ["global", "base"]
+`)
+	out, _, err = f2.run(Filters{Command: CmdDryRun, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(errb, "agent-env init or --profile") {
-		t.Fatalf("skip notice must point at agent-env init, got %q", errb)
+	if !strings.Contains(out, "example/mixed") {
+		t.Fatalf("global entry must ignore non-matching tags:\n%s", out)
 	}
 }
 
 func TestGatingResolveStatusConstraints(t *testing.T) {
 	t.Run("no repo config or profile", func(t *testing.T) {
 		f := newFixture(t)
-		f.writeManifest(projectEntry)
+		f.writeManifest(repoEntry)
 		for _, command := range []string{CmdResolve, CmdStatus} {
 			_, _, err := f.run(Filters{Command: command})
 			if err == nil || !strings.Contains(err.Error(), "need a repo config or --profile") {
@@ -83,19 +102,9 @@ func TestGatingResolveStatusConstraints(t *testing.T) {
 		}
 	})
 
-	t.Run("non project scope rejected", func(t *testing.T) {
-		f := newFixture(t)
-		f.writeManifest(projectEntry)
-		f.writeRepo(`profiles = ["base"]`)
-		_, _, err := f.run(Filters{Command: CmdResolve, Scopes: []string{"user"}, ScopeSeen: true})
-		if err == nil || !strings.Contains(err.Error(), "not supported here") {
-			t.Fatalf("want scope rejection, got %v", err)
-		}
-	})
-
 	t.Run("skill filter rejected", func(t *testing.T) {
 		f := newFixture(t)
-		f.writeManifest(projectEntry)
+		f.writeManifest(repoEntry)
 		f.writeRepo(`profiles = ["base"]`)
 		_, _, err := f.run(Filters{Command: CmdStatus, Skills: []string{"lane"}, SkillSeen: true})
 		if err == nil || !strings.Contains(err.Error(), "--skill/--skills filters") {
@@ -105,7 +114,7 @@ func TestGatingResolveStatusConstraints(t *testing.T) {
 
 	t.Run("skip-unchanged rejected", func(t *testing.T) {
 		f := newFixture(t)
-		f.writeManifest(projectEntry)
+		f.writeManifest(repoEntry)
 		f.writeRepo(`profiles = ["base"]`)
 		_, _, err := f.run(Filters{Command: CmdStatus, SkipUnchanged: true})
 		if err == nil || !strings.Contains(err.Error(), "--skip-unchanged is an apply flag") {
@@ -116,8 +125,11 @@ func TestGatingResolveStatusConstraints(t *testing.T) {
 
 func TestGatingProfilesRejectsFilters(t *testing.T) {
 	f := newFixture(t)
-	f.writeManifest(projectEntry)
-	_, _, err := f.run(Filters{Command: CmdProfiles, Scopes: []string{"user"}, ScopeSeen: true})
+	f.writeManifest(`[[installs]]
+source = "example/a"
+profiles = ["base"]
+`)
+	_, _, err := f.run(Filters{Command: CmdProfiles, Agents: []string{"codex"}, AgentSeen: true})
 	if err == nil || !strings.Contains(err.Error(), "not profiles") {
 		t.Fatalf("want profiles filter rejection, got %v", err)
 	}
@@ -125,7 +137,7 @@ func TestGatingProfilesRejectsFilters(t *testing.T) {
 
 func TestGatingListRejectsFiltersAndPrintsVerbatim(t *testing.T) {
 	f := newFixture(t)
-	body := "# a comment\n[[installs]]\nsource = \"example/a\"\nagents = [\"codex\"]\nscope = \"user\"\n"
+	body := "# a comment\n[[installs]]\nsource = \"example/a\"\nagents = [\"codex\"]\nprofiles = [\"global\"]\n"
 	f.writeManifest(body)
 
 	out, _, err := f.run(Filters{Command: CmdList})
@@ -144,7 +156,7 @@ func TestGatingListRejectsFiltersAndPrintsVerbatim(t *testing.T) {
 
 func TestGatingSkipUnchangedCombination(t *testing.T) {
 	f := newFixture(t)
-	f.writeManifest(projectEntry)
+	f.writeManifest(repoEntry)
 	_, _, err := f.run(Filters{
 		Command:       CmdApply,
 		Agents:        []string{"codex"},
@@ -158,35 +170,33 @@ func TestGatingSkipUnchangedCombination(t *testing.T) {
 
 func TestGatingApplyWithoutNonInteractive(t *testing.T) {
 	f := newFixture(t)
-	f.writeManifest(projectEntry)
+	f.writeManifest(globalEntry)
 	_, _, err := f.run(Filters{Command: CmdApply})
 	if err == nil || !strings.Contains(err.Error(), "interactive selection is not supported") {
 		t.Fatalf("want interactive-not-supported error, got %v", err)
 	}
 }
 
-func TestScopeValidationError(t *testing.T) {
+func TestGlobalProfileCannotBeSelected(t *testing.T) {
 	f := newFixture(t)
-	f.writeManifest(projectEntry)
-	_, _, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"bogus"}, ScopeSeen: true})
-	if err == nil || !strings.Contains(err.Error(), "unsupported scope 'bogus'") {
-		t.Fatalf("want scope validation error, got %v", err)
+	f.writeManifest(globalEntry)
+	_, _, err := f.run(Filters{Command: CmdDryRun, Profiles: []string{"global"}, ProfileSeen: true, NonInteractive: true})
+	if err == nil || !strings.Contains(err.Error(), `"global" is a reserved profile keyword`) {
+		t.Fatalf("want reserved-global error, got %v", err)
 	}
 }
 
 // --- profiles selection ------------------------------------------------------
 
-func TestProfilesCommandSortedDeduped(t *testing.T) {
+func TestProfilesCommandSortedDedupedAndExcludesGlobal(t *testing.T) {
 	f := newFixture(t)
 	f.writeManifest(`
 [[installs]]
 source = "example/a"
-scope = "user"
-profiles = ["base", "ark-mlops"]
+profiles = ["global", "base", "ark-mlops"]
 
 [[installs]]
 source = "example/b"
-scope = "user"
 profiles = ["maas", "base"]
 `)
 	out, _, err := f.run(Filters{Command: CmdProfiles})
@@ -200,9 +210,9 @@ profiles = ["maas", "base"]
 
 func TestProfilesCommandEmpty(t *testing.T) {
 	f := newFixture(t)
-	f.writeManifest("[[installs]]\nsource = \"example/a\"\nscope = \"user\"\n")
+	f.writeManifest("[[installs]]\nsource = \"example/a\"\nprofiles = [\"global\"]\n")
 	_, _, err := f.run(Filters{Command: CmdProfiles})
-	if err == nil || !strings.Contains(err.Error(), "no profiles declared") {
+	if err == nil || !strings.Contains(err.Error(), "no selectable profiles declared") {
 		t.Fatalf("want no-profiles error, got %v", err)
 	}
 }
@@ -215,17 +225,15 @@ func TestProfileIntersectionSelectsEntries(t *testing.T) {
 source = "example/keep"
 agents = ["codex"]
 skills = ["lane"]
-scope = "project"
 profiles = ["ark-mlops", "maas"]
 
 [[installs]]
 source = "example/skip"
 agents = ["codex"]
 skills = ["web"]
-scope = "project"
 profiles = ["frontend"]
 `)
-	out, _, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"project"}, ScopeSeen: true, NonInteractive: true})
+	out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
@@ -243,18 +251,16 @@ func TestCLIProfileOverridesRepoConfigWithoutWriting(t *testing.T) {
 source = "example/ark"
 agents = ["codex"]
 skills = ["lane"]
-scope = "project"
 profiles = ["ark-mlops"]
 
 [[installs]]
 source = "example/web"
 agents = ["codex"]
 skills = ["browser"]
-scope = "project"
 profiles = ["frontend"]
 `)
 	out, _, err := f.run(Filters{
-		Command: CmdDryRun, Scopes: []string{"project"}, ScopeSeen: true,
+		Command:  CmdDryRun,
 		Profiles: []string{"frontend"}, ProfileSeen: true, NonInteractive: true,
 	})
 	if err != nil {
@@ -275,20 +281,18 @@ func TestAgentNarrowing(t *testing.T) {
 source = "example/keep"
 agents = ["codex", "opencode"]
 skills = ["lane"]
-scope = "project"
 profiles = ["ark-mlops"]
 
 [[installs]]
 source = "example/skip"
 agents = ["trae"]
 skills = ["web"]
-scope = "project"
 profiles = ["ark-mlops"]
 `)
 
 	t.Run("repo agents narrow entries", func(t *testing.T) {
 		f.writeRepo("profiles = [\"ark-mlops\"]\nagents = [\"codex\"]\n")
-		out, _, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"project"}, ScopeSeen: true, NonInteractive: true})
+		out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 		if err != nil {
 			t.Fatalf("dry-run failed: %v", err)
 		}
@@ -302,7 +306,7 @@ profiles = ["ark-mlops"]
 
 	t.Run("absent repo agents use entry agents", func(t *testing.T) {
 		f.writeRepo(`profiles = ["ark-mlops"]`)
-		out, _, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"project"}, ScopeSeen: true, NonInteractive: true})
+		out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 		if err != nil {
 			t.Fatalf("dry-run failed: %v", err)
 		}
@@ -312,6 +316,25 @@ profiles = ["ark-mlops"]
 	})
 }
 
+func TestGlobalEntryIgnoresRepoAgentsNarrowing(t *testing.T) {
+	f := newFixture(t)
+	f.writeRepo("profiles = [\"base\"]\nagents = [\"codex\"]\n")
+	f.writeManifest(`
+[[installs]]
+source = "example/global"
+agents = ["codex", "opencode"]
+skills = ["lane"]
+profiles = ["global"]
+`)
+	out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	if !strings.Contains(out, "-a opencode") {
+		t.Fatalf("global entries must not be narrowed by repo agents:\n%s", out)
+	}
+}
+
 func TestSkillFilterExcludesWildcardAutoMatch(t *testing.T) {
 	f := newFixture(t)
 	f.writeManifest(`
@@ -319,13 +342,13 @@ func TestSkillFilterExcludesWildcardAutoMatch(t *testing.T) {
 source = "example/wild"
 agents = ["codex"]
 skills = ["*"]
-scope = "user"
+profiles = ["global"]
 
 [[installs]]
 source = "example/named"
 agents = ["codex"]
 skills = ["lane"]
-scope = "user"
+profiles = ["global"]
 `)
 	// No --skill: wildcard passes through as a literal --skill \*.
 	out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
@@ -349,5 +372,24 @@ scope = "user"
 	}
 	if !strings.Contains(out, "example/named") {
 		t.Fatalf("named skill entry missing:\n%s", out)
+	}
+}
+
+func TestResolveShowsRepoLevelEntries(t *testing.T) {
+	f := newFixture(t)
+	f.writeRepo(`profiles = ["base"]`)
+	f.writeManifest(globalEntry + repoEntry)
+	out, _, err := f.run(Filters{Command: CmdResolve, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if !strings.Contains(out, "example/ark") {
+		t.Fatalf("resolve must show repo-level entries:\n%s", out)
+	}
+	if strings.Contains(out, "example/global") {
+		t.Fatalf("resolve is repo-level only, must not show global entries:\n%s", out)
+	}
+	if !strings.Contains(out, "profiles: base") {
+		t.Fatalf("resolve must print the entry profiles:\n%s", out)
 	}
 }

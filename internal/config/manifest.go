@@ -23,6 +23,14 @@ const ctrlChars = "\t\n\r\x1c" + SepGS + SepRS + SepUS
 
 var kebabRe = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 
+// GlobalProfile is the reserved profile keyword that marks an entry as global
+// (the former scope = "user"): it installs unconditionally and ignores the
+// repo profile selection. It cannot be selected in .agent-env.toml or --profile.
+const GlobalProfile = "global"
+
+// IsGlobalProfile reports whether a profile name is the reserved global keyword.
+func IsGlobalProfile(name string) bool { return name == GlobalProfile }
+
 // EnvVar is one environment variable for the primary installer.
 type EnvVar struct {
 	Key   string
@@ -35,7 +43,9 @@ type PostInstall struct {
 	IfMissing string
 }
 
-// Install is a fully validated [[installs]] entry.
+// Install is a fully validated [[installs]] entry. Global means the entry's
+// profiles contain the reserved keyword "global" (formerly scope = "user");
+// otherwise the entry is repo-level and gated by the profile selection.
 type Install struct {
 	Source    string
 	AgentsRaw string
@@ -43,11 +53,11 @@ type Install struct {
 	Agents    []string
 	Skills    []string
 
-	Scope string
-	Mode  string
+	Mode string
 
 	ProfilesRaw string
 	Profiles    []string
+	Global      bool
 
 	PostInstall []PostInstall
 	Installer   string
@@ -141,8 +151,7 @@ func parseInstall(e any, manifestPath string) (Install, error) {
 		mode = s
 	}
 
-	scope, err := expandScopes(entry["scope"], source)
-	if err != nil {
+	if err := rejectRemovedScope(entry, source); err != nil {
 		return Install{}, err
 	}
 	postInstall, _, err := normalizePostInstall(entry["post_install"], source)
@@ -157,7 +166,7 @@ func parseInstall(e any, manifestPath string) (Install, error) {
 	if err != nil {
 		return Install{}, err
 	}
-	profilesRaw, profiles, err := normalizeProfiles(entry["profiles"], source)
+	profilesRaw, profiles, global, err := normalizeProfilesRequired(entry["profiles"], source)
 	if err != nil {
 		return Install{}, err
 	}
@@ -168,16 +177,25 @@ func parseInstall(e any, manifestPath string) (Install, error) {
 		SkillsRaw:   skillsRaw,
 		Agents:      splitTrimNonEmpty(agentsRaw),
 		Skills:      splitTrimNonEmpty(skillsRaw),
-		Scope:       scope,
 		Mode:        mode,
 		ProfilesRaw: profilesRaw,
 		Profiles:    profiles,
+		Global:      global,
 		PostInstall: postInstall,
 		Installer:   installer,
 		Env:         env,
 		EnvRaw:      envRaw,
 	}
 	return inst, nil
+}
+
+// rejectRemovedScope fails when an entry still carries the removed "scope"
+// field, pointing at the profiles-based replacement.
+func rejectRemovedScope(entry map[string]any, source string) error {
+	if _, ok := entry["scope"]; ok {
+		return fmt.Errorf("%s: \"scope\" was removed; use profiles = [\"global\"] for a global (all-repo) entry, or profiles = [\"<tag>\", ...] for a repo-level entry in source: %s", Prog, source)
+	}
+	return nil
 }
 
 // normalizeList mirrors the zsh normalize_list helper: nil -> [], a bare
@@ -201,31 +219,6 @@ func normalizeList(value any, field, source string) ([]string, error) {
 		return out, nil
 	}
 	return nil, fmt.Errorf("%s: \"%s\" must be a string or array in source: %s", Prog, field, source)
-}
-
-// expandScopes validates the single-select scope field and returns exactly one
-// canonical value ("user" or "project").
-func expandScopes(raw any, source string) (string, error) {
-	if raw == nil {
-		return "", fmt.Errorf("%s: each install entry must declare \"scope\" as \"user\" or \"project\": %s", Prog, source)
-	}
-	if s, ok := raw.(string); ok {
-		v := strings.TrimSpace(s)
-		if v == "user" || v == "project" {
-			return v, nil
-		}
-		hint := ""
-		if v == "global" || v == "" {
-			hint = " (use \"user\")"
-		} else if v == "local" {
-			hint = " (use \"project\")"
-		}
-		return "", fmt.Errorf("%s: scope must be \"user\" or \"project\", got \"%s\"%s in source: %s", Prog, v, hint, source)
-	}
-	if _, ok := raw.([]any); ok {
-		return "", fmt.Errorf("%s: \"scope\" is single-select now and must be the string \"user\" or \"project\"; arrays are no longer supported, remove the array in source: %s", Prog, source)
-	}
-	return "", fmt.Errorf("%s: \"scope\" must be the string \"user\" or \"project\" in source: %s", Prog, source)
 }
 
 func normalizePostInstall(value any, source string) ([]PostInstall, string, error) {
@@ -293,13 +286,17 @@ func normalizePostInstall(value any, source string) ([]PostInstall, string, erro
 	return out, strings.Join(records, SepRS), nil
 }
 
-func normalizeProfiles(value any, source string) (string, []string, error) {
+// normalizeProfilesRequired validates the required profiles field. It returns
+// the comma-joined raw value, the deduped list, and whether "global" is present
+// (which makes the entry global). The reserved keyword must be the first token;
+// other tokens are classification tags only.
+func normalizeProfilesRequired(value any, source string) (string, []string, bool, error) {
 	if value == nil {
-		return "", nil, nil
+		return "", nil, false, fmt.Errorf("%s: \"profiles\" is required; add profiles = [\"global\"] for a global (all-repo) entry, or profiles = [\"<tag>\", ...] (e.g. [\"base\"]) for a repo-level entry in source: %s", Prog, source)
 	}
 	items, err := normalizeList(value, "profiles", source)
 	if err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	ordered := []string{}
 	seen := map[string]bool{}
@@ -309,14 +306,18 @@ func normalizeProfiles(value any, source string) (string, []string, error) {
 			continue
 		}
 		if !kebabRe.MatchString(name) {
-			return "", nil, fmt.Errorf("%s: profile names must be kebab-case (e.g. \"ark-mlops\"), got \"%s\" in source: %s", Prog, name, source)
+			return "", nil, false, fmt.Errorf("%s: profile names must be kebab-case (e.g. \"ark-mlops\"), got \"%s\" in source: %s", Prog, name, source)
 		}
 		if !seen[name] {
 			seen[name] = true
 			ordered = append(ordered, name)
 		}
 	}
-	return strings.Join(ordered, ","), ordered, nil
+	if len(ordered) == 0 {
+		return "", nil, false, fmt.Errorf("%s: \"profiles\" must not be empty; add profiles = [\"global\"] for a global (all-repo) entry, or profiles = [\"<tag>\", ...] for a repo-level entry in source: %s", Prog, source)
+	}
+	global := seen["global"]
+	return strings.Join(ordered, ","), ordered, global, nil
 }
 
 func normalizeInstaller(value any, source string) (string, error) {

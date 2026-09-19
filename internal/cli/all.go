@@ -14,7 +14,6 @@ import (
 // apply/dry-run commands. Domain-specific filters (--skill, --name, ...) are
 // deliberately not defined here, so cobra rejects them as unknown flags.
 type allFlags struct {
-	scopes   []string
 	agents   []string
 	profile  []string
 	profiles []string
@@ -26,7 +25,6 @@ type allFlags struct {
 
 func addAllFlags(cmd *cobra.Command, f *allFlags) {
 	fl := cmd.Flags()
-	fl.StringArrayVar(&f.scopes, "scope", nil, "user, project, or all (repeatable/comma-separated)")
 	fl.StringArrayVar(&f.agents, "agent", nil, "only sync for AGENT (repeatable/comma-separated)")
 	fl.StringArrayVar(&f.profile, "profile", nil, "temporary profile filter (repeatable/comma-separated)")
 	fl.StringArrayVar(&f.profiles, "profiles", nil, "comma-separated alias for --profile")
@@ -40,10 +38,8 @@ func addAllFlags(cmd *cobra.Command, f *allFlags) {
 // skills.Run and mcp.Run.
 type sharedFilters struct {
 	command        string
-	scopes         []string
 	agents         []string
 	profiles       []string
-	scopeSeen      bool
 	agentSeen      bool
 	profileSeen    bool
 	nonInteractive bool
@@ -53,10 +49,8 @@ type sharedFilters struct {
 func (f *allFlags) toShared(cmd *cobra.Command, command string) sharedFilters {
 	return sharedFilters{
 		command:        command,
-		scopes:         flattenComma(f.scopes),
 		agents:         flattenComma(f.agents),
 		profiles:       append(flattenComma(f.profile), flattenComma(f.profiles)...),
-		scopeSeen:      cmd.Flags().Changed("scope"),
 		agentSeen:      cmd.Flags().Changed("agent"),
 		profileSeen:    cmd.Flags().Changed("profile") || cmd.Flags().Changed("profiles"),
 		nonInteractive: f.noInter || f.yes || f.noInter2,
@@ -75,10 +69,8 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 	fmt.Fprintln(out, "=== skills ===")
 	skillsErr = skills.Run(sOpts, skills.Filters{
 		Command:        sf.command,
-		Scopes:         sf.scopes,
 		Agents:         sf.agents,
 		Profiles:       sf.profiles,
-		ScopeSeen:      sf.scopeSeen,
 		AgentSeen:      sf.agentSeen,
 		ProfileSeen:    sf.profileSeen,
 		NonInteractive: sf.nonInteractive,
@@ -88,10 +80,8 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 	fmt.Fprintln(out, "=== mcp ===")
 	mcpErr = mcp.Run(mOpts, mcp.Filters{
 		Command:        sf.command,
-		Scopes:         sf.scopes,
 		Agents:         sf.agents,
 		Profiles:       sf.profiles,
-		ScopeSeen:      sf.scopeSeen,
 		AgentSeen:      sf.agentSeen,
 		ProfileSeen:    sf.profileSeen,
 		NonInteractive: sf.nonInteractive,
@@ -103,7 +93,7 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 func newAllCmd(command, short string) *cobra.Command {
 	var f allFlags
 	c := &cobra.Command{
-		Use:   command + " [--scope user|project|all] [--agent AGENT]... [--profile PROFILE]... [--non-interactive] [--skip-unchanged]",
+		Use:   command + " [--agent AGENT]... [--profile PROFILE]... [--non-interactive] [--skip-unchanged]",
 		Short: short,
 		Long: "Run both domains in one shot: skills first, then MCP. Both domains always run,\n" +
 			"even when the first one fails; the exit code is non-zero when either fails.\n\n" +

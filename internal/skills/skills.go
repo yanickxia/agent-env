@@ -38,17 +38,13 @@ type Options struct {
 }
 
 // Filters is the normalized CLI filter set plus the flags that gate them.
-// The *Seen booleans mirror the zsh *_filter_seen variables and matter even
-// when the corresponding list is empty (e.g. --scope all).
 type Filters struct {
 	Command string
 
-	Scopes   []string
 	Agents   []string
 	Profiles []string
 	Skills   []string
 
-	ScopeSeen   bool
 	AgentSeen   bool
 	ProfileSeen bool
 	SkillSeen   bool
@@ -100,7 +96,7 @@ func Run(opts Options, f Filters) error {
 		return fmt.Errorf("%s: --interactive and --non-interactive cannot be used together", config.Prog)
 	}
 	if r.f.Interactive {
-		return fmt.Errorf("%s: --interactive is not supported by agent-env (fzf selection was not ported); pass --non-interactive or explicit --scope/--agent/--skill/--profile filters", config.Prog)
+		return fmt.Errorf("%s: --interactive is not supported by agent-env (fzf selection was not ported); pass --non-interactive or explicit --agent/--skill/--profile filters", config.Prog)
 	}
 
 	switch f.Command {
@@ -120,23 +116,6 @@ func Run(opts Options, f Filters) error {
 // normalizeFilters trims/dedupes/validates the raw flag values, mirroring the
 // zsh _add_*_filters helpers.
 func (r *runner) normalizeFilters() error {
-	scopes := []string{}
-	for _, raw := range r.f.Scopes {
-		tok := strings.TrimSpace(raw)
-		if tok == "" {
-			continue
-		}
-		switch tok {
-		case "all":
-			continue
-		case "user", "project":
-			scopes = appendUnique(scopes, tok)
-		default:
-			return fmt.Errorf("%s: unsupported scope '%s' (expected user, project, or all)", config.Prog, tok)
-		}
-	}
-	r.f.Scopes = scopes
-
 	agents := []string{}
 	for _, raw := range r.f.Agents {
 		tok := strings.TrimSpace(raw)
@@ -155,6 +134,9 @@ func (r *runner) normalizeFilters() error {
 		}
 		if !config.KebabCase(tok) {
 			return fmt.Errorf("%s: invalid profile name '%s' (expected kebab-case, e.g. ark-mlops)", config.Prog, tok)
+		}
+		if config.IsGlobalProfile(tok) {
+			return fmt.Errorf("%s: \"global\" is a reserved profile keyword and cannot be selected with --profile", config.Prog)
 		}
 		profiles = appendUnique(profiles, tok)
 	}

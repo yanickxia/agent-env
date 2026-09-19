@@ -19,10 +19,9 @@ func (e *ExitError) Error() string { return e.Msg }
 
 // filterFlags collects the raw flag values. Splitting/trimming/validation
 // happens either here (comma expansion, matching zsh) or in skills.Run
-// (scope/profile validation). The *Seen flags use pflag.Changed so a value
-// normalized to empty (--scope all) still counts as an explicit filter.
+// (profile validation). The *Seen flags use pflag.Changed so an explicit
+// empty value still counts as a filter being present.
 type filterFlags struct {
-	scopes   []string
 	agents   []string
 	profile  []string
 	profiles []string
@@ -37,10 +36,9 @@ type filterFlags struct {
 
 // addFilterFlags registers the full filter surface on every skills
 // subcommand; individual commands reject the flags they do not support so the
-// error mirrors the zsh script instead of looking like an unknown flag.
+// error mirrors the domain semantics.
 func addFilterFlags(cmd *cobra.Command, f *filterFlags) {
 	fl := cmd.Flags()
-	fl.StringArrayVar(&f.scopes, "scope", nil, "user, project, or all (repeatable/comma-separated)")
 	fl.StringArrayVar(&f.agents, "agent", nil, "only install for AGENT (repeatable/comma-separated)")
 	fl.StringArrayVar(&f.profile, "profile", nil, "temporary profile filter (repeatable/comma-separated)")
 	fl.StringArrayVar(&f.profiles, "profiles", nil, "comma-separated alias for --profile")
@@ -60,12 +58,10 @@ func (f *filterFlags) toFilters(cmd *cobra.Command, command string) skills.Filte
 		Interactive:    f.interact,
 		SkipUnchanged:  f.skipUnch,
 	}
-	fl.Scopes = flattenComma(f.scopes)
 	fl.Agents = flattenComma(f.agents)
 	fl.Profiles = append(flattenComma(f.profile), flattenComma(f.profiles)...)
 	fl.Skills = append(append([]string{}, f.skill...), flattenComma(f.skills)...)
 
-	fl.ScopeSeen = cmd.Flags().Changed("scope")
 	fl.AgentSeen = cmd.Flags().Changed("agent")
 	fl.ProfileSeen = cmd.Flags().Changed("profile") || cmd.Flags().Changed("profiles")
 	fl.SkillSeen = cmd.Flags().Changed("skill") || cmd.Flags().Changed("skills")

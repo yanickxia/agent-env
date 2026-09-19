@@ -68,7 +68,7 @@ func TestInitCreatesNewConfig(t *testing.T) {
 	assertContains(t, f.out.String(), "wrote "+f.path)
 	assertContains(t, f.out.String(), "profiles: base, ark-mlops")
 	assertContains(t, f.out.String(), "agents: codex, opencode")
-	assertContains(t, f.out.String(), "next: agent-env skills apply --scope project --non-interactive")
+	assertContains(t, f.out.String(), "next: agent-env skills apply --non-interactive")
 }
 
 func TestInitMergesExisting(t *testing.T) {
@@ -193,7 +193,7 @@ func TestInitApplyUsesOverrideAndPropagatesRC(t *testing.T) {
 	if gotBin != "/stub/agent-env" || gotDir != f.dir {
 		t.Fatalf("apply called with bin=%q dir=%q", gotBin, gotDir)
 	}
-	assertContains(t, f.out.String(), "/stub/agent-env skills apply --scope project --non-interactive --skip-unchanged")
+	assertContains(t, f.out.String(), "/stub/agent-env skills apply --non-interactive --skip-unchanged")
 }
 
 func TestInitApplyDryRunPrintsButDoesNotRun(t *testing.T) {

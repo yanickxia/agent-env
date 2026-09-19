@@ -71,6 +71,9 @@ func Run(opts Options, f Filters) error {
 		if !config.KebabCase(name) {
 			return fmt.Errorf("%s: invalid profile name '%s' (expected kebab-case matching ^[a-z][a-z0-9]*(-[a-z0-9]+)*$)", config.Prog, name)
 		}
+		if config.IsGlobalProfile(name) {
+			return fmt.Errorf("%s: \"global\" is a reserved profile keyword and cannot be selected in a repo config; list the repo-level tags you need instead", config.Prog)
+		}
 	}
 
 	configPath := opts.RepoConfigPath
@@ -121,7 +124,7 @@ func Run(opts Options, f Filters) error {
 		if err != nil {
 			return err
 		}
-		printCommand(opts.Stdout, bin, "skills", "apply", "--scope", "project", "--non-interactive", "--skip-unchanged")
+		printCommand(opts.Stdout, bin, "skills", "apply", "--non-interactive", "--skip-unchanged")
 		if f.DryRun {
 			return nil
 		}
@@ -132,13 +135,13 @@ func Run(opts Options, f Filters) error {
 		return run(bin, opts.ProjectRoot, opts.Stdout, opts.Stderr)
 	}
 	if !f.DryRun {
-		fmt.Fprintf(opts.Stdout, "next: agent-env skills apply --scope project --non-interactive\n")
+		fmt.Fprintf(opts.Stdout, "next: agent-env skills apply --non-interactive\n")
 	}
 	return nil
 }
 
 func defaultRunApply(bin, dir string, stdout, stderr io.Writer) error {
-	cmd := exec.Command(bin, "skills", "apply", "--scope", "project", "--non-interactive", "--skip-unchanged")
+	cmd := exec.Command(bin, "skills", "apply", "--non-interactive", "--skip-unchanged")
 	cmd.Dir = dir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -205,6 +208,9 @@ func parseExisting(path string) (*existingConfig, error) {
 		for _, name := range list {
 			if !config.KebabCase(name) {
 				return nil, fmt.Errorf("%s: \"profiles\" entry \"%s\" must match ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ in repo config: %s", config.Prog, name, path)
+			}
+			if config.IsGlobalProfile(name) {
+				return nil, fmt.Errorf("%s: \"global\" is a reserved profile keyword and cannot be selected in repo config: %s", config.Prog, path)
 			}
 		}
 		out.profiles = list

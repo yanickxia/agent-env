@@ -11,7 +11,7 @@ import (
 )
 
 func (r *runner) anyFilterSeen() bool {
-	return r.f.ScopeSeen || r.f.AgentSeen || r.f.SkillSeen || r.f.ProfileSeen
+	return r.f.AgentSeen || r.f.SkillSeen || r.f.ProfileSeen
 }
 
 func (r *runner) cmdList() error {
@@ -40,11 +40,14 @@ func (r *runner) cmdProfiles() error {
 	profiles := []string{}
 	for _, entry := range entries {
 		for _, p := range entry.Profiles {
+			if config.IsGlobalProfile(p) {
+				continue
+			}
 			profiles = appendUnique(profiles, p)
 		}
 	}
 	if len(profiles) == 0 {
-		return fmt.Errorf("%s: no profiles declared in %s", config.Prog, r.opts.ManifestPath)
+		return fmt.Errorf("%s: no selectable profiles declared in %s (\"global\" is a reserved keyword and is excluded)", config.Prog, r.opts.ManifestPath)
 	}
 	sort.Strings(profiles)
 	for _, p := range profiles {
@@ -57,10 +60,10 @@ func (r *runner) cmdApply() error {
 	if r.f.SkipUnchanged && (r.f.AgentSeen || r.f.SkillSeen) {
 		return fmt.Errorf("%s: --skip-unchanged cannot be combined with --agent/--skill/--skills; stamps are only read/written by complete runs", config.Prog)
 	}
-	// zsh would launch fzf here. Interactive selection is deliberately not
-	// ported, so fail clearly instead of silently syncing everything.
+	// Interactive selection is deliberately not ported, so fail clearly instead
+	// of silently syncing everything.
 	if r.f.Command == CmdApply && !r.f.NonInteractive && !r.anyFilterSeen() && !r.f.SkipUnchanged {
-		return fmt.Errorf("%s: interactive selection is not supported yet; pass --non-interactive or an explicit filter (--scope/--agent/--skill/--profile)", config.Prog)
+		return fmt.Errorf("%s: interactive selection is not supported yet; pass --non-interactive or an explicit filter (--agent/--skill/--profile)", config.Prog)
 	}
 
 	if err := r.loadRepo(); err != nil {
@@ -68,10 +71,6 @@ func (r *runner) cmdApply() error {
 	}
 	r.computeEffectiveProfiles()
 	r.detectClaudeSymlink()
-
-	if err := r.projectApplyGating(); err != nil {
-		return err
-	}
 	return r.processManifest(r.f.Command)
 }
 
@@ -86,30 +85,11 @@ func (r *runner) cmdResolve() error {
 	return r.resolveManifest(r.f.Command)
 }
 
-func (r *runner) projectScopeOnly() bool {
-	return len(r.f.Scopes) == 1 && r.f.Scopes[0] == "project"
-}
-
-func (r *runner) projectApplyGating() error {
-	if r.repoMissing && len(r.f.Profiles) == 0 && r.projectScopeOnly() {
-		return fmt.Errorf("%s: no .agent-env.toml in %s and no --profile given\n"+
-			"  initialize one with: agent-env init <profile>... [--agent AGENT]... [--apply]\n"+
-			"  or select profiles for this run only: agent-env skills %s --scope project --profile <profile>",
-			config.Prog, r.opts.ProjectRoot, r.f.Command)
-	}
-	return nil
-}
-
 func (r *runner) resolveStatusGating() error {
 	if r.repoMissing && len(r.f.Profiles) == 0 {
 		return fmt.Errorf("%s: resolve/status need a repo config or --profile; no .agent-env.toml in %s\n"+
 			"  initialize one with: agent-env init <profile>... [--agent AGENT]... [--apply]",
 			config.Prog, r.opts.ProjectRoot)
-	}
-	for _, sf := range r.f.Scopes {
-		if sf != "project" {
-			return fmt.Errorf("%s: resolve/status are project-scoped; --scope '%s' is not supported here", config.Prog, sf)
-		}
 	}
 	if r.f.SkillSeen {
 		return fmt.Errorf("%s: --skill/--skills filters are supported for apply and dry-run, not resolve/status", config.Prog)
@@ -131,22 +111,15 @@ func (r *runner) processManifest(mode string) error {
 
 	entryCount := 0
 	processedCount := 0
-	noSelectionSkips := 0
+	repoLevelSkips := 0
 
 	for _, entry := range entries {
 		entryCount++
 		source := config.ExpandSource(r.opts.Home, strings.TrimSpace(entry.Source))
 
-		if !r.scopeMatches(entry.Scope) {
-			continue
-		}
-
-		if entry.Scope == "project" {
+		if !entry.Global {
 			if r.effectiveProf == "" {
-				noSelectionSkips++
-				continue
-			}
-			if strings.TrimSpace(entry.ProfilesRaw) == "" {
+				repoLevelSkips++
 				continue
 			}
 			if !profilesIntersect(entry.ProfilesRaw, r.effectiveProf) {
@@ -154,7 +127,7 @@ func (r *runner) processManifest(mode string) error {
 			}
 		}
 
-		selectedAgents, ok := r.selectEntryAgents(entry.Scope, entry.AgentsRaw)
+		selectedAgents, ok := r.selectEntryAgents(entry.Global, entry.AgentsRaw)
 		if !ok {
 			continue
 		}
@@ -184,14 +157,21 @@ func (r *runner) processManifest(mode string) error {
 		agentsRaw := strings.TrimSpace(entry.AgentsRaw)
 		skillsRaw := strings.TrimSpace(entry.SkillsRaw)
 
-		stampScope := entry.Scope
+		// The stamp payload keeps its historical "user"/"project" vocabulary:
+		// global entries derive "user", repo-level entries derive "project".
+		stampScope := "project:" + projectRoot
+		signatureScope := "project"
+		if entry.Global {
+			stampScope = "user"
+			signatureScope = "user"
+		}
+
 		entrySig := ""
 		if r.f.SkipUnchanged {
-			if entry.Scope == "project" {
-				stampScope = "project:" + projectRoot
-				entrySig = stamp.Signature(source, selectedAgents, skillsRaw, entry.Mode, entry.Scope, entry.Installer, entry.EnvRaw, r.effectiveProf, projectRoot)
+			if entry.Global {
+				entrySig = stamp.Signature(source, agentsRaw, skillsRaw, entry.Mode, signatureScope, entry.Installer, entry.EnvRaw, "", "")
 			} else {
-				entrySig = stamp.Signature(source, agentsRaw, skillsRaw, entry.Mode, entry.Scope, entry.Installer, entry.EnvRaw, "", "")
+				entrySig = stamp.Signature(source, selectedAgents, skillsRaw, entry.Mode, signatureScope, entry.Installer, entry.EnvRaw, r.effectiveProf, projectRoot)
 			}
 			if value, found := store.Lookup(source, stampScope); found && value == entrySig {
 				fmt.Fprintf(r.out, "# skip (unchanged): %s [%s]\n", source, stampScope)
@@ -225,9 +205,9 @@ func (r *runner) processManifest(mode string) error {
 			if len(ec.envArgs) > 0 {
 				runCmd = append([]string{"env"}, append(append([]string{}, ec.envArgs...), ec.npx...)...)
 			}
-			r.printScopedCommand(entry.Scope, projectRoot, runCmd)
+			r.printScopedCommand(entry.Global, projectRoot, runCmd)
 			if mode == CmdApply {
-				if err := r.runScopedCommand(entry.Scope, projectRoot, runCmd); err != nil {
+				if err := r.runScopedCommand(entry.Global, projectRoot, runCmd); err != nil {
 					fmt.Fprintf(r.errw, "%s: npx skills failed for %s: %v\n", config.Prog, source, err)
 				} else {
 					installedViaNpx = true
@@ -236,11 +216,11 @@ func (r *runner) processManifest(mode string) error {
 		}
 
 		if len(ec.aiden) > 0 {
-			r.printScopedCommand(entry.Scope, projectRoot, ec.aiden)
+			r.printScopedCommand(entry.Global, projectRoot, ec.aiden)
 			if mode == CmdApply {
 				if _, err := lookPath("aiden"); err != nil {
 					fmt.Fprintf(r.errw, "%s: missing required command for aiden: aiden (skipped for source: %s)\n", config.Prog, source)
-				} else if err := r.runScopedCommand(entry.Scope, projectRoot, ec.aiden); err != nil {
+				} else if err := r.runScopedCommand(entry.Global, projectRoot, ec.aiden); err != nil {
 					fmt.Fprintf(r.errw, "%s: aiden skills failed for %s: %v\n", config.Prog, source, err)
 				} else {
 					installedViaAiden = true
@@ -258,9 +238,9 @@ func (r *runner) processManifest(mode string) error {
 		processedCount++
 	}
 
-	if noSelectionSkips > 0 {
-		fmt.Fprintf(r.errw, "%s: no .agent-env.toml in %s and no --profile given; skipped %d project entries (use agent-env init or --profile)\n",
-			config.Prog, projectRoot, noSelectionSkips)
+	if repoLevelSkips > 0 {
+		fmt.Fprintf(r.errw, "%s: no .agent-env.toml in %s and no --profile given; skipped %d repo-level entries (use agent-env init or --profile)\n",
+			config.Prog, projectRoot, repoLevelSkips)
 	}
 	if entryCount == 0 {
 		return fmt.Errorf("%s: no active entries found in %s", config.Prog, r.opts.ManifestPath)
@@ -276,9 +256,6 @@ func (r *runner) processManifest(mode string) error {
 
 func (r *runner) filterDetail() string {
 	detail := ""
-	if len(r.f.Scopes) > 0 {
-		detail += " scope=" + strings.Join(r.f.Scopes, ",")
-	}
 	if len(r.f.Agents) > 0 {
 		detail += " agent=" + strings.Join(r.f.Agents, ",")
 	}
@@ -309,16 +286,13 @@ func (r *runner) resolveManifest(mode string) error {
 
 	printed := 0
 	for _, entry := range entries {
-		if entry.Scope != "project" {
-			continue
-		}
-		if strings.TrimSpace(entry.ProfilesRaw) == "" {
+		if entry.Global {
 			continue
 		}
 		if !profilesIntersect(entry.ProfilesRaw, r.effectiveProf) {
 			continue
 		}
-		resolvedAgents, ok := r.selectEntryAgents("project", entry.AgentsRaw)
+		resolvedAgents, ok := r.selectEntryAgents(false, entry.AgentsRaw)
 		if !ok {
 			continue
 		}
@@ -329,12 +303,12 @@ func (r *runner) resolveManifest(mode string) error {
 		for _, item := range splitTrimNonEmpty(skillsRaw) {
 			fmt.Fprintf(r.out, "  %s\n", item)
 			fmt.Fprintf(r.out, "    source: %s\n", source)
-			fmt.Fprintf(r.out, "    scope: %s\n", entry.Scope)
+			fmt.Fprintf(r.out, "    profiles: %s\n", entry.ProfilesRaw)
 			if resolvedAgents != "" {
 				fmt.Fprintf(r.out, "    agents: %s\n", resolvedAgents)
 			}
 			if mode == CmdStatus {
-				sig := stamp.Signature(source, resolvedAgents, skillsRaw, entry.Mode, entry.Scope, entry.Installer, entry.EnvRaw, r.effectiveProf, projectRoot)
+				sig := stamp.Signature(source, resolvedAgents, skillsRaw, entry.Mode, "project", entry.Installer, entry.EnvRaw, r.effectiveProf, projectRoot)
 				if value, found := store.Lookup(source, "project:"+projectRoot); found && value == sig {
 					fmt.Fprintln(r.out, "    stamp: unchanged")
 				} else {
@@ -344,7 +318,7 @@ func (r *runner) resolveManifest(mode string) error {
 		}
 	}
 	if printed == 0 {
-		fmt.Fprintln(r.out, "  (no matching project entries)")
+		fmt.Fprintln(r.out, "  (no matching repo-level entries)")
 	}
 	return nil
 }

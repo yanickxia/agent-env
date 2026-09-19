@@ -149,13 +149,13 @@ agents = ["claude"]
 type = "stdio"
 command = "npx"
 args = ["-y", "ucd@latest"]
-scope = ["user"]
+profiles = ["global"]
 [servers.env]
 FOO = "bar"
 `)
 	f.write(f.claude, `{"projects":{"p":{"a":1}},"mcpServers":{"old":{"type":"stdio"}},"other":42}`)
 
-	out, _, err := f.run(Filters{Command: CmdApply, Scopes: []string{"user"}, ScopeSeen: true, NonInteractive: true})
+	out, _, err := f.run(Filters{Command: CmdApply, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("apply failed: %v", err)
 	}
@@ -190,9 +190,9 @@ name = "u-claude"
 agents = ["claude"]
 type = "stdio"
 command = "npx"
-scope = ["user"]
+profiles = ["global"]
 `)
-	_, errb, err := f.run(Filters{Command: CmdApply, Scopes: []string{"user"}, ScopeSeen: true, NonInteractive: true})
+	_, errb, err := f.run(Filters{Command: CmdApply, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("apply failed: %v", err)
 	}

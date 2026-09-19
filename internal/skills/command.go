@@ -26,7 +26,7 @@ func (r *runner) buildCommands(source string, entry config.Install, agents, skil
 	ec := entryCommands{envArgs: entry.EnvArgs()}
 
 	cmd := []string{"npx", "--yes", "skills", "add", source}
-	if entry.Scope == "user" {
+	if entry.Global {
 		cmd = append(cmd, "-g")
 	}
 
@@ -57,7 +57,7 @@ func (r *runner) buildCommands(source string, entry config.Install, agents, skil
 
 	if wantsAiden {
 		aiden := []string{"aiden", "skills", "add", source}
-		if entry.Scope == "user" {
+		if entry.Global {
 			aiden = append(aiden, "-g")
 		}
 		for _, skill := range skills {
@@ -93,10 +93,10 @@ func (r *runner) printClaudeSkipNotice() {
 	fmt.Fprintf(r.errw, "%s: ~/.claude/skills is a symlink to the skills store; not passing -a claude-code (claude sees the store directly)\n", config.Prog)
 }
 
-// printScopedCommand mirrors print_scoped_command: project scope prefixes the
-// line with `cd <root> && `.
-func (r *runner) printScopedCommand(scope, projectRoot string, args []string) {
-	if scope == "project" {
+// printScopedCommand prefixes the line with `cd <root> && ` for repo-level
+// (non-global) entries, whose installers run inside the repo.
+func (r *runner) printScopedCommand(global bool, projectRoot string, args []string) {
+	if !global {
 		fmt.Fprintf(r.out, "cd %s && ", zshQuote(projectRoot))
 		printCommand(r.out, args)
 		return
@@ -104,14 +104,14 @@ func (r *runner) printScopedCommand(scope, projectRoot string, args []string) {
 	printCommand(r.out, args)
 }
 
-// runScopedCommand mirrors run_scoped_command: project scope runs in the repo
-// root.
-func (r *runner) runScopedCommand(scope, projectRoot string, args []string) error {
+// runScopedCommand runs repo-level entries inside the repo root; global entries
+// run in the current directory.
+func (r *runner) runScopedCommand(global bool, projectRoot string, args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
 	cmd := exec.Command(args[0], args[1:]...)
-	if scope == "project" {
+	if !global {
 		cmd.Dir = projectRoot
 	}
 	cmd.Stdout = r.out

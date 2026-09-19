@@ -106,7 +106,7 @@ func TestAllInOneBothDomainsExecute(t *testing.T) {
 source = "example/skill"
 agents = ["codex"]
 skills = ["lane"]
-scope = "user"
+profiles = ["global"]
 
 [[servers]]
 name = "srv"
@@ -114,10 +114,10 @@ agents = ["codex"]
 type = "stdio"
 command = "npx"
 args = ["-y", "x"]
-scope = ["user"]
+profiles = ["global"]
 `)
 
-	sf := sharedFilters{command: skills.CmdApply, scopes: []string{"user"}, scopeSeen: true, nonInteractive: true, skipUnchanged: true}
+	sf := sharedFilters{command: skills.CmdApply, nonInteractive: true, skipUnchanged: true}
 	sErr, mErr := runAll(sf, f.sOpts, f.mOpts)
 	if sErr != nil || mErr != nil {
 		t.Fatalf("runAll errors: skills=%v mcp=%v", sErr, mErr)
@@ -159,7 +159,7 @@ func TestAllInOneAggregatesFailureAndStillRunsMCP(t *testing.T) {
 source = "example/bad"
 agents = ["codex"]
 skills = ["lane"]
-scope = "user"
+profiles = ["global"]
 post_install = ["false"]
 
 [[servers]]
@@ -168,10 +168,10 @@ agents = ["codex"]
 type = "stdio"
 command = "npx"
 args = ["-y", "x"]
-scope = ["user"]
+profiles = ["global"]
 `)
 
-	sf := sharedFilters{command: skills.CmdApply, scopes: []string{"user"}, scopeSeen: true, nonInteractive: true}
+	sf := sharedFilters{command: skills.CmdApply, nonInteractive: true}
 	sErr, mErr := runAll(sf, f.sOpts, f.mOpts)
 	if sErr == nil || !strings.Contains(sErr.Error(), "post_install hook(s) failed") {
 		t.Fatalf("expected skills failure, got %v", sErr)
@@ -189,48 +189,47 @@ scope = ["user"]
 	}
 }
 
-func TestAllInOneScopePassedToBothDomains(t *testing.T) {
+func TestAllInOneProfilePassedToBothDomains(t *testing.T) {
 	f := newAllFixture(t)
 	f.writeManifest(t, `
 [[installs]]
-source = "example/skills-user"
+source = "example/skills-global"
 agents = ["codex"]
 skills = ["a"]
-scope = "user"
+profiles = ["global"]
 
 [[installs]]
-source = "example/skills-project"
+source = "example/skills-base"
 agents = ["codex"]
 skills = ["b"]
-scope = "project"
+profiles = ["base"]
 
 [[servers]]
-name = "mcp-user"
+name = "mcp-global"
 agents = ["codex"]
 type = "stdio"
 command = "npx"
-scope = ["user"]
+profiles = ["global"]
 
 [[servers]]
-name = "mcp-project"
+name = "mcp-base"
 agents = ["codex"]
 type = "stdio"
 command = "npx"
-scope = ["project"]
 profiles = ["base"]
 `)
 
-	sf := sharedFilters{command: skills.CmdDryRun, scopes: []string{"user"}, scopeSeen: true, nonInteractive: true}
+	sf := sharedFilters{command: skills.CmdDryRun, profiles: []string{"base"}, profileSeen: true, nonInteractive: true}
 	sErr, mErr := runAll(sf, f.sOpts, f.mOpts)
 	if sErr != nil || mErr != nil {
 		t.Fatalf("runAll errors: skills=%v mcp=%v", sErr, mErr)
 	}
 	out := f.out.String()
-	if !strings.Contains(out, "example/skills-user") || strings.Contains(out, "example/skills-project") {
-		t.Fatalf("skills domain did not honor --scope user:\n%s", out)
+	if !strings.Contains(out, "example/skills-global") || !strings.Contains(out, "example/skills-base") {
+		t.Fatalf("skills domain did not honor --profile base:\n%s", out)
 	}
-	if !strings.Contains(out, "mcp-user") || strings.Contains(out, "mcp-project") {
-		t.Fatalf("mcp domain did not honor --scope user:\n%s", out)
+	if !strings.Contains(out, "mcp-global") || !strings.Contains(out, "mcp-base") {
+		t.Fatalf("mcp domain did not honor --profile base:\n%s", out)
 	}
 }
 
@@ -251,7 +250,7 @@ func TestAllInOneApplyRequiresNonInteractive(t *testing.T) {
 	cmd := newAllCmd("apply", "test")
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
-	cmd.SetArgs([]string{"--scope", "user"})
+	cmd.SetArgs([]string{"--profile", "base"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "requires --non-interactive") {
 		t.Fatalf("want non-interactive requirement, got %v", err)

@@ -73,6 +73,9 @@ func LoadRepoConfigWithHint(path, unknownKeyHint string) (cfg *RepoConfig, found
 		if !kebabRe.MatchString(name) {
 			return nil, false, fmt.Errorf("%s: profile names must be kebab-case (e.g. \"ark-mlops\"), got \"%s\" in %s", Prog, name, path)
 		}
+		if IsGlobalProfile(name) {
+			return nil, false, fmt.Errorf("%s: \"global\" is a reserved profile keyword and cannot be selected in repo config: %s", Prog, path)
+		}
 	}
 
 	mode := ""

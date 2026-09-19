@@ -1,45 +1,51 @@
-# agent-env 全局配置（agent-skills-sync + agent-mcp-sync 共用）。
+# agent-env 全局配置样例（[[installs]] + [[servers]]）。
 #
-# 本文件由 agent-env repo 维护，经 chezmoi symlink 到
-# ~/.config/agent-env/config.toml。两个顶层表：
-#   [[installs]]  skills 安装清单（agent-skills-sync 读取，忽略 [[servers]]）
-#   [[servers]]   MCP server 清单（agent-mcp-sync 读取，忽略 [[installs]]）
+# 本文件是 agent-env repo 里的样例。真实部署文件由 chezmoi 管理：
+#   ~/.config/agent-env/config.toml（源：chezmoi dot_config/agent-env/config.toml）
 #
-# secrets 不写在本文件里：放在 ~/.config/agent-env/secrets.toml（chezmoi private，
-# 不进 repo），格式为 key = "value"。清单里的 ${VAR} 在渲染时解析：先按 key
-# （exact / lowercase）查 secrets.toml，再回退到环境变量。例如 browserless 的
-# ${BROWSERLESS_TOKEN} 对应 secrets.toml 的 browserless_token = "..."。
+# 顶层表：
+#   [[installs]]  skills 安装清单
+#   [[servers]]   MCP server 清单
 #
-# agentbuddy 安装器已弃用（见下方 mlops 条目的 TODO）。
-
+# 每个条目的 profiles 必填非空，并决定层级：
+#   profiles = ["global"]       全局条目：无条件安装（原 scope = "user"）；
+#                               可与其他 tag 混写，如 ["global", "base"]。
+#   profiles = ["base", ...]    repo 级条目：受 .agent-env.toml / --profile
+#                               的选择门禁（交集非空才安装）。
+#   "global" 是保留关键字，不能出现在 .agent-env.toml 或 --profile 中。
+#
+# secrets 不写在本文件里（放在 ~/.config/agent-env/secrets.toml，chezmoi private）。
+# 清单里的 ${VAR} 在解析时展开：先查 secrets.toml，再回退环境变量。
+# 样例中的 token 均为 ${VAR} 占位符。
+#
 # ==================== skills（[[installs]]） ====================
 
 [[installs]]
 source = "microsoft/playwright-cli"
 agents = ["claude-code", "codex", "opencode"]
 skills = ["playwright-cli"]
-scope = "user"
+profiles = ["global"]
 mode = "symlink"
 
 [[installs]]
 source = "larksuite/cli"
 agents = ["claude-code", "codex", "opencode"]
 skills = ["*"]
-scope = "user"
+profiles = ["global"]
 mode = "symlink"
 
 [[installs]]
 source = "git@code.byted.org:byteapi/bytedcli.git"
 agents = ["claude-code", "codex", "opencode"]
 skills = ["bytedcli"]
-scope = "user"
+profiles = ["global"]
 mode = "symlink"
 
 [[installs]]
 source = "git@code.byted.org:machinelearning/super-ops.git"
 agents = ["claude-code", "codex", "opencode"]
 skills = ["*"]
-scope = "user"
+profiles = ["global"]
 mode = "symlink"
 
 # Luma Vision Skill：识图能力的轻量版（相对 agent-mcp 里的 luma MCP）。
@@ -52,7 +58,7 @@ mode = "symlink"
 source = "JochenYang/luma-mcp"
 agents = ["claude-code", "codex", "opencode"]
 skills = ["luma-vision"]
-scope = "user"
+profiles = ["global"]
 mode = "symlink"
 
 # agent-vision Skill（用户自研 @yanickxia/agent-vision）：与 agent-mcp 里的
@@ -64,7 +70,7 @@ mode = "symlink"
 source = "yanickxia/agent-vision"
 agents = ["claude-code", "codex", "opencode"]
 skills = ["agent-vision"]
-scope = "user"
+profiles = ["global"]
 mode = "symlink"
 
 # 搜索三件套（@yanickxia/skills）：brave-search / serpapi-search / youcom-search。
@@ -79,7 +85,7 @@ mode = "symlink"
 source = "yanickxia/skills"
 agents = ["claude-code", "codex", "opencode"]
 skills = ["brave-search", "serpapi-search", "youcom-search"]
-scope = "user"
+profiles = ["global"]
 mode = "symlink"
 
 # ClickUp CLI Skill（krodak/clickup-cli）：40+ 命令覆盖任务/sprint/评论/时间跟踪/
@@ -97,7 +103,7 @@ mode = "symlink"
 source = "krodak/clickup-cli"
 agents = ["claude-code", "codex", "opencode"]
 skills = ["clickup"]
-scope = "user"
+profiles = ["global"]
 mode = "symlink"
 post_install = [
   { run = "npm install -g @krodak/clickup-cli", if_missing = "cup" },
@@ -125,7 +131,7 @@ post_install = [
 source = "git@code.byted.org:xiayan.cn/skills.git"
 agents = ["claude-code", "codex", "opencode"]
 skills = ["*"]
-scope = "user"
+profiles = ["global"]
 mode = "symlink"
 
 # ==================== MCP servers（[[servers]]） ====================
@@ -136,7 +142,6 @@ agents = ["codex", "claude", "trae", "opencode", "aiden"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@playwright/mcp@latest"]
-scope = ["project"]
 profiles = ["base"]
 tags = ["browser", "testing"]
 
@@ -157,7 +162,6 @@ agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@playwright/mcp@latest", "--cdp-endpoint", "wss://browserless.office.vnet.yanick.site/?token=${BROWSERLESS_TOKEN}&launch=%7B%22headless%22%3Afalse%7D"]
-scope = ["project"]
 profiles = ["base"]
 tags = ["browser", "playwright", "remote"]
 
@@ -167,7 +171,6 @@ agents = ["codex", "claude", "trae", "opencode", "aiden"]
 type = "stdio"
 command = "npx"
 args = ["-y", "chrome-devtools-mcp@latest"]
-scope = ["project"]
 profiles = ["base"]
 tags = ["browser", "devtools", "debugging", "performance"]
 
@@ -176,7 +179,6 @@ name = "browseros"
 agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
 type = "streamable-http"
 url = "http://127.0.0.1:9000/mcp"
-scope = ["project"]
 profiles = ["base"]
 tags = ["browser"]
 
@@ -186,7 +188,6 @@ agents = ["codex", "claude", "trae", "opencode", "aiden"]
 type = "streamable-http"
 url = "https://superops.byted.org/mcp"
 bearer_token_env_var = "OPS_API_TOKEN"
-scope = ["project"]
 profiles = ["base"]
 tags = ["internal", "ops"]
 
@@ -200,7 +201,7 @@ agents = ["codex", "claude", "trae", "aiden", "pi"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@upstash/context7-mcp@latest"]
-scope = ["user"]
+profiles = ["global"]
 tags = ["docs", "context", "reference"]
 
 [[servers]]
@@ -209,7 +210,6 @@ agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
 type = "stdio"
 command = "bytedcli"
 args = ["mcp"]
-scope = ["project"]
 profiles = ["base"]
 tags = ["internal", "bytedance", "mcp"]
 [servers.env]
@@ -230,7 +230,6 @@ name = "mcphub-search"
 agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
 type = "streamable-http"
 url = "https://mcphub.inner.yanick.site/mcp/search"
-scope = ["project"]
 profiles = ["base"]
 tags = ["search"]
 [servers.headers]
@@ -242,7 +241,6 @@ name = "mcphub-notes"
 agents = ["codex", "claude", "trae", "opencode", "aiden"]
 type = "streamable-http"
 url = "https://mcphub.vnet.yanick.site/mcp/notes"
-scope = ["project"]
 profiles = ["base"]
 tags = ["notes"]
 [servers.headers]
@@ -255,7 +253,6 @@ name = "mcphub-memos"
 agents = ["codex", "claude", "trae", "opencode", "aiden"]
 type = "streamable-http"
 url = "https://mcphub.vnet.yanick.site/mcp/memos"
-scope = ["project"]
 profiles = ["base"]
 tags = ["memos"]
 [servers.headers]
@@ -283,7 +280,6 @@ agents = ["codex", "claude", "trae", "opencode", "aiden"]
 type = "stdio"
 command = "npx"
 args = ["-y", "luma-mcp@latest"]
-scope = ["project"]
 profiles = ["base"]
 tags = ["vision", "image", "ocr"]
 [servers.env]
@@ -304,7 +300,6 @@ agents = ["codex", "claude", "trae", "opencode", "aiden"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@yanickxia/agent-vision"]
-scope = ["project"]
 profiles = ["base"]
 tags = ["vision", "image", "video"]
 [servers.env]
@@ -341,7 +336,6 @@ name = "clickup"
 agents = ["claude", "trae", "aiden"]
 type = "streamable-http"
 url = "https://mcp.clickup.com/mcp"
-scope = ["project"]
 profiles = ["base"]
 tags = ["tasks", "docs", "project-management"]
 [servers.headers]
@@ -380,7 +374,6 @@ agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
 type = "stdio"
 command = "sessions"
 args = ["--mcp"]
-scope = ["project"]
 profiles = ["base"]
 tags = ["sessions", "history", "recall", "memory"]
 
@@ -391,7 +384,6 @@ agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
 type = "streamable-http"
 url = "https://ai-proxy.inner.yanick.site/mcp"
 bearer_token_env_var = "AI_PROXY_API_KEY"   # codex/opencode 只认这个；需在 agent 环境里 export
-scope = ["project"]                            # 或 ["project"] 只给当前项目
 profiles = ["base"]
 tags = ["vision", "image", "video", "proxy"]
 [servers.headers]

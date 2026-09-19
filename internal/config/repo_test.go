@@ -135,3 +135,10 @@ func TestParseSecrets(t *testing.T) {
 		t.Fatalf("missing secrets must not error: %v", err)
 	}
 }
+
+func TestLoadRepoConfigRejectsGlobalProfile(t *testing.T) {
+	_, _, err := LoadRepoConfig(writeRepo(t, "profiles = [\"base\", \"global\"]\n"))
+	if err == nil || !strings.Contains(err.Error(), `"global" is a reserved profile keyword`) {
+		t.Fatalf("want reserved-global error, got %v", err)
+	}
+}

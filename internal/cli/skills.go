@@ -24,7 +24,7 @@ func newSkillsCmd() *cobra.Command {
 		newSkillsActionCmd("list", "Print the current config", skills.CmdList),
 		newSkillsActionCmd("profiles", "Print the distinct profiles declared by config entries (sorted)", skills.CmdProfiles),
 		newSkillsActionCmd("resolve", "Read-only: show the project entries this repo would install", skills.CmdResolve),
-		newSkillsActionCmd("status", "Read-only: show the stored project-scope stamps for this repo", skills.CmdStatus),
+		newSkillsActionCmd("status", "Read-only: show the stored repo-level stamps for this repo", skills.CmdStatus),
 	)
 	return c
 }

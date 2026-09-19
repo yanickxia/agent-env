@@ -33,8 +33,9 @@ Options:
                        (--agent codex,opencode). Tokens are trimmed and
                        de-duplicated in order. Optional.
   --apply              After writing the config, run
-                       agent-env skills apply --scope project --non-interactive --skip-unchanged
-                       from the repository root. The sync exit code is propagated.
+                       agent-env skills apply --non-interactive --skip-unchanged
+                       from the repository root (repo-level profiles gate the
+                       install). The sync exit code is propagated.
   --dry-run            Print the path and the full content that would be written,
                        but do not touch the file. Combined with --apply, also
                        print the sync command without running it.
@@ -59,8 +60,8 @@ Repository config schema (only these keys are permitted):
   team = "ark"                       # string / number / boolean / string array
 
   Repo config may only SELECT profiles for the repository. It must not carry
-  installation details or hooks: keys such as post_install, source, skills or
-  scope are rejected on purpose so a checked-in config cannot run commands.
+  installation details or hooks: keys such as post_install, source or skills
+  are rejected on purpose so a checked-in config cannot run commands.
 
 Environment:
   AGENT_ENV_REPO_CONFIG   Override the repo config path (full path).
@@ -87,7 +88,7 @@ Environment:
 		},
 	}
 	c.Flags().StringArrayVar(&agents, "agent", nil, "agent backend(s) for this repo (repeatable/comma-separated)")
-	c.Flags().BoolVar(&apply, "apply", false, "after writing, run: agent-env skills apply --scope project --non-interactive --skip-unchanged")
+	c.Flags().BoolVar(&apply, "apply", false, "after writing, run: agent-env skills apply --non-interactive --skip-unchanged")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print the path and content without writing")
 	return c
 }

@@ -12,7 +12,7 @@ agents = ["codex"]
 type = "stdio"
 command = "npx"
 args = ["-y", "uc@latest"]
-scope = ["user"]
+profiles = ["global"]
 
 [[servers]]
 name = "u-opencode"
@@ -20,7 +20,7 @@ agents = ["opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "uo@latest"]
-scope = ["user"]
+profiles = ["global"]
 
 [[servers]]
 name = "u-trae"
@@ -28,7 +28,7 @@ agents = ["trae"]
 type = "stdio"
 command = "npx"
 args = ["-y", "ut@latest"]
-scope = ["user"]
+profiles = ["global"]
 `
 
 func runUpsert(t *testing.T, f *fixture, agent, input string) string {
@@ -131,7 +131,7 @@ func TestUpsertStdinI2EqualsApply(t *testing.T) {
 	}
 
 	// apply --scope user writes the transformed files.
-	if _, _, err := f.run(Filters{Command: CmdApply, Scopes: []string{"user"}, ScopeSeen: true, NonInteractive: true}); err != nil {
+	if _, _, err := f.run(Filters{Command: CmdApply, NonInteractive: true}); err != nil {
 		t.Fatalf("apply failed: %v", err)
 	}
 	for agent, base := range bases {
@@ -192,7 +192,7 @@ func TestUpsertStdinRejectsFilters(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("")
 	f.writeManifest(upsertManifest)
-	_, _, err := f.run(Filters{Command: CmdUpsertStdin, Agents: []string{"codex"}, AgentSeen: true, Scopes: []string{"user"}, ScopeSeen: true})
+	_, _, err := f.run(Filters{Command: CmdUpsertStdin, Agents: []string{"codex"}, AgentSeen: true, Profiles: []string{"base"}, ProfileSeen: true})
 	if err == nil || !strings.Contains(err.Error(), "does not accept filters") {
 		t.Fatalf("want filter rejection, got %v", err)
 	}

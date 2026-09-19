@@ -7,15 +7,11 @@ import (
 	"github.com/yanickxia/agent-env/internal/config"
 )
 
-func mapAidenScope(scope string) string {
-	switch scope {
-	case "project":
-		return "project"
-	case "user":
+func mapAidenScope(global bool) string {
+	if global {
 		return "global"
-	default:
-		return ""
 	}
+	return "project"
 }
 
 // handleAiden builds and (in apply mode) runs the `aiden mcp add` command for
@@ -32,11 +28,7 @@ func (r *runner) handleAiden(mode string, row config.Server) error {
 		transport = "http"
 	}
 
-	aidenScope := mapAidenScope(row.Scope)
-	if aidenScope == "" {
-		fmt.Fprintf(r.errw, "%s: warning: unsupported scope '%s' for aiden server '%s'; skipped\n", config.Prog, row.Scope, name)
-		return nil
-	}
+	aidenScope := mapAidenScope(row.Global)
 
 	switch transport {
 	case "stdio":
@@ -86,10 +78,11 @@ func (r *runner) handleAiden(mode string, row config.Server) error {
 }
 
 // handleClaudeProject builds and (in apply mode) runs `claude mcp add` for a
-// project-scope claude server.
+// repo-level claude server (global claude servers are patched into
+// ~/.claude.json instead).
 func (r *runner) handleClaudeProject(mode string, row config.Server) error {
 	name := strings.TrimSpace(row.Name)
-	scope := row.Scope
+	scope := "project"
 	cmd := []string{"claude", "mcp", "add"}
 	serverType := strings.TrimSpace(row.Type)
 

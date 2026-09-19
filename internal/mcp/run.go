@@ -45,12 +45,10 @@ type Options struct {
 type Filters struct {
 	Command string
 
-	Scopes   []string
 	Agents   []string
 	Names    []string
 	Profiles []string
 
-	ScopeSeen   bool
 	AgentSeen   bool
 	ProfileSeen bool
 
@@ -124,23 +122,6 @@ func Run(opts Options, f Filters) error {
 }
 
 func (r *runner) normalize() error {
-	scopes := []string{}
-	for _, raw := range r.f.Scopes {
-		tok := strings.TrimSpace(raw)
-		if tok == "" {
-			continue
-		}
-		switch tok {
-		case "all":
-			continue
-		case "user", "project":
-			scopes = appendUnique(scopes, tok)
-		default:
-			return fmt.Errorf("%s: unsupported scope filter '%s' (expected user, project, or all)", config.Prog, tok)
-		}
-	}
-	r.f.Scopes = scopes
-
 	agents := []string{}
 	for _, raw := range r.f.Agents {
 		tok := strings.TrimSpace(raw)
@@ -170,6 +151,9 @@ func (r *runner) normalize() error {
 		if !config.KebabCase(tok) {
 			return fmt.Errorf("%s: invalid profile name '%s' (expected kebab-case, e.g. ark-mlops)", config.Prog, tok)
 		}
+		if config.IsGlobalProfile(tok) {
+			return fmt.Errorf("%s: \"global\" is a reserved profile keyword and cannot be selected with --profile", config.Prog)
+		}
 		profiles = appendUnique(profiles, tok)
 	}
 	r.f.Profiles = profiles
@@ -186,7 +170,7 @@ func appendUnique(list []string, item string) []string {
 }
 
 func (r *runner) anyFilterSeen() bool {
-	return r.f.ScopeSeen || r.f.AgentSeen || r.f.ProfileSeen || len(r.f.Names) > 0
+	return r.f.AgentSeen || r.f.ProfileSeen || len(r.f.Names) > 0
 }
 
 // loadSecrets parses secrets.toml once and caches redaction values.
@@ -277,18 +261,6 @@ func (r *runner) computeEffectiveProfiles() {
 	r.effectiveProf = strings.Join(unique, ",")
 }
 
-func (r *runner) scopeMatches(scope string) bool {
-	if len(r.f.Scopes) == 0 {
-		return true
-	}
-	for _, f := range r.f.Scopes {
-		if scope == f {
-			return true
-		}
-	}
-	return false
-}
-
 func (r *runner) nameMatches(name string) bool {
 	if len(r.f.Names) == 0 {
 		return true
@@ -348,11 +320,14 @@ func (r *runner) cmdProfiles() error {
 	profiles := []string{}
 	for _, s := range r.servers {
 		for _, p := range s.Profiles {
+			if config.IsGlobalProfile(p) {
+				continue
+			}
 			profiles = appendUnique(profiles, p)
 		}
 	}
 	if len(profiles) == 0 {
-		return fmt.Errorf("%s: no profiles declared in %s", config.Prog, r.opts.ManifestPath)
+		return fmt.Errorf("%s: no selectable profiles declared in %s (\"global\" is a reserved keyword and is excluded)", config.Prog, r.opts.ManifestPath)
 	}
 	sort.Strings(profiles)
 	for _, p := range profiles {
@@ -365,7 +340,7 @@ func (r *runner) cmdUpsertStdin() error {
 	if len(r.f.Agents) != 1 {
 		return fmt.Errorf("%s: upsert-stdin requires exactly one --agent AGENT", config.Prog)
 	}
-	if r.f.ScopeSeen || r.f.ProfileSeen || len(r.f.Names) > 0 {
+	if r.f.ProfileSeen || len(r.f.Names) > 0 {
 		return fmt.Errorf("%s: upsert-stdin does not accept filters", config.Prog)
 	}
 	if _, err := os.Stat(r.opts.ManifestPath); err != nil {
@@ -405,7 +380,7 @@ func (r *runner) cmdUpsertStdin() error {
 
 func (r *runner) cmdSync() error {
 	if r.f.Command == CmdApply && !r.f.NonInteractive {
-		return fmt.Errorf("%s: interactive selection is not supported yet; pass --non-interactive or an explicit filter (--scope/--agent/--name/--profile)", config.Prog)
+		return fmt.Errorf("%s: interactive selection is not supported yet; pass --non-interactive or an explicit filter (--agent/--name/--profile)", config.Prog)
 	}
 	if err := r.loadServers(); err != nil {
 		return err
@@ -425,9 +400,6 @@ func (r *runner) cmdSync() error {
 func (r *runner) validateAgentFilters() error {
 	known := []string{}
 	for _, s := range r.servers {
-		if !r.scopeMatches(s.Scope) {
-			continue
-		}
 		for _, a := range s.Agents {
 			known = appendUnique(known, a)
 		}
@@ -445,9 +417,9 @@ func (r *runner) validateAgentFilters() error {
 	if len(unknown) > 0 {
 		msg := fmt.Sprintf("%s: unknown agent(s): %s", config.Prog, strings.Join(unknown, ", "))
 		if len(known) > 0 {
-			msg += fmt.Sprintf("\n%s: agents available in this scope: %s", config.Prog, strings.Join(known, ", "))
+			msg += fmt.Sprintf("\n%s: agents available: %s", config.Prog, strings.Join(known, ", "))
 		} else {
-			msg += fmt.Sprintf("\n%s: no MCP entries match the selected scope", config.Prog)
+			msg += fmt.Sprintf("\n%s: no MCP entries found", config.Prog)
 		}
 		return fmt.Errorf("%s", msg)
 	}
@@ -481,16 +453,19 @@ func (r *runner) processManifest(mode string) error {
 		"trae-user": {}, "codex-user": {}, "opencode-user": {}, "claude-user": {},
 	}
 
-	profileSkipCount := 0
+	repoLevelSkips := 0
 	entryCount := 0
 
 	for _, row := range r.servers {
-		if !r.scopeMatches(row.Scope) || !r.nameMatches(row.Name) {
+		if !r.nameMatches(row.Name) {
 			continue
 		}
-		if row.Scope == "project" && len(r.effectiveList) > 0 {
+		if !row.Global {
+			if r.effectiveProf == "" {
+				repoLevelSkips++
+				continue
+			}
 			if !profilesIntersect(row.Profiles, r.effectiveProf) {
-				profileSkipCount++
 				continue
 			}
 		}
@@ -502,7 +477,7 @@ func (r *runner) processManifest(mode string) error {
 				continue
 			}
 		}
-		if row.Scope == "project" && r.repo != nil && len(r.repo.Agents) > 0 {
+		if !row.Global && r.repo != nil && len(r.repo.Agents) > 0 {
 			agents = intersectOrdered(agents, r.repo.Agents)
 			if len(agents) == 0 {
 				continue
@@ -512,29 +487,29 @@ func (r *runner) processManifest(mode string) error {
 		for _, agent := range agents {
 			switch agent {
 			case "codex":
-				if row.Scope == "project" {
-					c.codexProject = addByName(c.codexProject, seen["codex-project"], row)
-				} else {
+				if row.Global {
 					c.codexUser = addByName(c.codexUser, seen["codex-user"], row)
+				} else {
+					c.codexProject = addByName(c.codexProject, seen["codex-project"], row)
 				}
 			case "trae", "trae-cn":
-				if row.Scope == "project" {
-					c.traeProject = addByName(c.traeProject, seen["trae-project"], row)
-				} else {
+				if row.Global {
 					c.traeUser = addByName(c.traeUser, seen["trae-user"], row)
+				} else {
+					c.traeProject = addByName(c.traeProject, seen["trae-project"], row)
 				}
 			case "opencode":
-				if row.Scope == "project" {
-					c.opencodeProject = addByName(c.opencodeProject, seen["opencode-project"], row)
-				} else {
+				if row.Global {
 					c.opencodeUser = addByName(c.opencodeUser, seen["opencode-user"], row)
+				} else {
+					c.opencodeProject = addByName(c.opencodeProject, seen["opencode-project"], row)
 				}
 			case "aiden":
 				if err := r.handleAiden(mode, row); err != nil {
 					return err
 				}
 			case "claude":
-				if row.Scope == "user" {
+				if row.Global {
 					c.claudeUser = addByName(c.claudeUser, seen["claude-user"], row)
 				} else if err := r.handleClaudeProject(mode, row); err != nil {
 					return err
@@ -548,8 +523,9 @@ func (r *runner) processManifest(mode string) error {
 		entryCount++
 	}
 
-	if profileSkipCount > 0 {
-		fmt.Fprintf(r.errw, "%s: skipped %d project servers without matching profiles\n", config.Prog, profileSkipCount)
+	if repoLevelSkips > 0 {
+		fmt.Fprintf(r.errw, "%s: no .agent-env.toml in %s and no --profile given; skipped %d repo-level servers (use agent-env init or --profile)\n",
+			config.Prog, projectRoot, repoLevelSkips)
 	}
 
 	traeProjectPath := filepath.Join(projectRoot, ".trae", "traecli.yaml")
@@ -639,13 +615,14 @@ func intersectOrdered(declared, filter []string) []string {
 	return out
 }
 
-// userEntriesAll is the unfiltered user-scope collection shared with
-// upsert-stdin (agent_user_transform semantics).
+// userEntriesAll is the unfiltered global-entry collection shared with
+// upsert-stdin (agent_user_transform semantics): entries whose profiles
+// contain the reserved "global" keyword.
 func (r *runner) userEntriesAll(agent string) []config.Server {
 	out := []config.Server{}
 	seen := map[string]bool{}
 	for _, s := range r.servers {
-		if s.Scope != "user" {
+		if !s.Global {
 			continue
 		}
 		if !containsString(s.Agents, agent) {

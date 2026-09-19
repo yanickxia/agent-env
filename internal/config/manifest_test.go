@@ -22,9 +22,8 @@ func TestParseManifestValid(t *testing.T) {
 source = "example/full"
 agents = ["claude-code", "codex"]
 skills = ["a", "b"]
-scope = "user"
 mode = "symlink"
-profiles = ["base", "ark-mlops", "base"]
+profiles = ["global", "base", "ark-mlops", "base"]
 post_install = [
   { run = "npm install -g x", if_missing = "x" },
   "echo bare",
@@ -39,13 +38,16 @@ env = { B_KEY = "2", A_KEY = "1" }
 		t.Fatalf("want 1 entry, got %d", len(entries))
 	}
 	e := entries[0]
-	if e.Source != "example/full" || e.Scope != "user" || e.Mode != "symlink" || e.Installer != "skills" {
+	if e.Source != "example/full" || e.Mode != "symlink" || e.Installer != "skills" {
 		t.Fatalf("unexpected normalized entry: %+v", e)
+	}
+	if !e.Global {
+		t.Fatalf("profiles containing global must set Global=true: %+v", e)
 	}
 	if e.AgentsRaw != "claude-code,codex" || e.SkillsRaw != "a,b" {
 		t.Fatalf("raw fields = %q / %q", e.AgentsRaw, e.SkillsRaw)
 	}
-	if e.ProfilesRaw != "base,ark-mlops" {
+	if e.ProfilesRaw != "global,base,ark-mlops" {
 		t.Fatalf("profiles dedupe/order = %q", e.ProfilesRaw)
 	}
 	if len(e.PostInstall) != 2 || e.PostInstall[0].IfMissing != "x" || e.PostInstall[1].IfMissing != "" {
@@ -67,14 +69,17 @@ func TestParseManifestScalarListAccepted(t *testing.T) {
 source = "example/s"
 agents = "codex"
 skills = "lane"
-scope = "project"
 profiles = "base"
 `)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := entries[0]; got.AgentsRaw != "codex" || got.SkillsRaw != "lane" || got.ProfilesRaw != "base" {
+	got := entries[0]
+	if got.AgentsRaw != "codex" || got.SkillsRaw != "lane" || got.ProfilesRaw != "base" {
 		t.Fatalf("scalar normalization = %+v", got)
+	}
+	if got.Global {
+		t.Fatalf("repo-level entry must not be global: %+v", got)
 	}
 }
 
@@ -85,83 +90,83 @@ func TestParseManifestErrors(t *testing.T) {
 		want string
 	}{
 		{
-			name: "missing scope",
+			name: "scope removed",
+			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\nprofiles = [\"base\"]\n",
+			want: `"scope" was removed`,
+		},
+		{
+			name: "scope removed array",
+			body: "[[installs]]\nsource = \"example/a\"\nscope = [\"project\"]\nprofiles = [\"base\"]\n",
+			want: `"scope" was removed`,
+		},
+		{
+			name: "profiles missing",
 			body: "[[installs]]\nsource = \"example/a\"\n",
-			want: `must declare "scope" as "user" or "project"`,
+			want: `"profiles" is required`,
 		},
 		{
-			name: "scope global",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"global\"\n",
-			want: `scope must be "user" or "project", got "global" (use "user")`,
-		},
-		{
-			name: "scope local",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"local\"\n",
-			want: `(use "project")`,
-		},
-		{
-			name: "scope array",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = [\"user\"]\n",
-			want: "arrays are no longer supported",
+			name: "profiles empty",
+			body: "[[installs]]\nsource = \"example/a\"\nprofiles = []\n",
+			want: `"profiles" must not be empty`,
 		},
 		{
 			name: "agents wrong type",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\nagents = [1, 2]\n",
+			body: "[[installs]]\nsource = \"example/a\"\nagents = [1, 2]\nprofiles = [\"base\"]\n",
 			want: `"agents" must be a string or array`,
 		},
 		{
 			name: "skills wrong type",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\nskills = 5\n",
+			body: "[[installs]]\nsource = \"example/a\"\nskills = 5\nprofiles = [\"base\"]\n",
 			want: `"skills" must be a string or array`,
 		},
 		{
 			name: "mode wrong type",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\nmode = 3\n",
+			body: "[[installs]]\nsource = \"example/a\"\nmode = 3\nprofiles = [\"base\"]\n",
 			want: `"mode" must be a string`,
 		},
 		{
 			name: "profiles non kebab",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\nprofiles = [\"Ark_ML\"]\n",
+			body: "[[installs]]\nsource = \"example/a\"\nprofiles = [\"Ark_ML\"]\n",
 			want: "profile names must be kebab-case",
 		},
 		{
 			name: "post_install not array",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\npost_install = \"x\"\n",
+			body: "[[installs]]\nsource = \"example/a\"\nprofiles = [\"base\"]\npost_install = \"x\"\n",
 			want: `"post_install" must be an array`,
 		},
 		{
 			name: "post_install unknown key",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\npost_install = [{ run = \"x\", extra = \"y\" }]\n",
+			body: "[[installs]]\nsource = \"example/a\"\nprofiles = [\"base\"]\npost_install = [{ run = \"x\", extra = \"y\" }]\n",
 			want: "unknown post_install key(s) extra",
 		},
 		{
 			name: "post_install missing run",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\npost_install = [{ if_missing = \"x\" }]\n",
+			body: "[[installs]]\nsource = \"example/a\"\nprofiles = [\"base\"]\npost_install = [{ if_missing = \"x\" }]\n",
 			want: `post_install "run" must be a non-empty string`,
 		},
 		{
 			name: "installer agentbuddy rejected",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\ninstaller = \"agentbuddy\"\n",
+			body: "[[installs]]\nsource = \"example/a\"\nprofiles = [\"base\"]\ninstaller = \"agentbuddy\"\n",
 			want: `installer "agentbuddy" is not supported`,
 		},
 		{
 			name: "installer unknown",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\ninstaller = \"nope\"\n",
+			body: "[[installs]]\nsource = \"example/a\"\nprofiles = [\"base\"]\ninstaller = \"nope\"\n",
 			want: `unsupported installer "nope"`,
 		},
 		{
 			name: "env not table",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\nenv = [1]\n",
+			body: "[[installs]]\nsource = \"example/a\"\nprofiles = [\"base\"]\nenv = [1]\n",
 			want: `"env" must be a table`,
 		},
 		{
 			name: "env non-string value",
-			body: "[[installs]]\nsource = \"example/a\"\nscope = \"user\"\nenv = { N = 1 }\n",
+			body: "[[installs]]\nsource = \"example/a\"\nprofiles = [\"base\"]\nenv = { N = 1 }\n",
 			want: `env value for "N" must be a string`,
 		},
 		{
 			name: "missing source",
-			body: "[[installs]]\nscope = \"user\"\n",
+			body: "[[installs]]\nprofiles = [\"base\"]\n",
 			want: `must include a non-empty "source"`,
 		},
 		{
@@ -207,12 +212,13 @@ func TestParseManifestIgnoresServers(t *testing.T) {
 	entries, err := parseBody(t, `
 [[installs]]
 source = "example/a"
-scope = "user"
+profiles = ["global"]
 
 [[servers]]
 name = "srv"
 type = "stdio"
 command = "npx"
+profiles = ["base"]
 `)
 	if err != nil {
 		t.Fatalf("servers table must be ignored: %v", err)
@@ -232,5 +238,8 @@ func TestParseManifestEntryCount(t *testing.T) {
 	}
 	if entries[0].Source != "microsoft/playwright-cli" {
 		t.Fatalf("first source = %q", entries[0].Source)
+	}
+	if !entries[0].Global {
+		t.Fatalf("fixture installs should be global entries")
 	}
 }

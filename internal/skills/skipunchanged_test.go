@@ -11,7 +11,6 @@ const skipManifest = `
 source = "example/ark"
 agents = ["codex", "opencode"]
 skills = ["mlops-lane"]
-scope = "project"
 profiles = ["ark-mlops"]
 `
 
@@ -25,8 +24,6 @@ func TestSkipUnchangedFullFlow(t *testing.T) {
 
 	fl := Filters{
 		Command:        CmdApply,
-		Scopes:         []string{"project"},
-		ScopeSeen:      true,
 		NonInteractive: true,
 		SkipUnchanged:  true,
 	}
@@ -67,8 +64,6 @@ func TestDryRunNeverWritesStamp(t *testing.T) {
 
 	_, _, err := f.run(Filters{
 		Command:        CmdDryRun,
-		Scopes:         []string{"project"},
-		ScopeSeen:      true,
 		NonInteractive: true,
 		SkipUnchanged:  true,
 	})
@@ -91,8 +86,6 @@ func TestStampPerRepoRoot(t *testing.T) {
 	f.writeManifest(skipManifest)
 	fl := Filters{
 		Command:        CmdApply,
-		Scopes:         []string{"project"},
-		ScopeSeen:      true,
 		NonInteractive: true,
 		SkipUnchanged:  true,
 	}

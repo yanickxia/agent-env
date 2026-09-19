@@ -13,28 +13,26 @@ agents = ["codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "fake@latest"]
-scope = ["project"]
 profiles = ["base", "ark-mlops"]
 
 [[servers]]
-name = "srv-untagged"
+name = "srv-frontend"
 agents = ["codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "fake2@latest"]
-scope = ["project"]
+profiles = ["frontend"]
 
 [[servers]]
-name = "srv-user"
+name = "srv-global"
 agents = ["codex"]
 type = "stdio"
 command = "npx"
 args = ["-y", "fake3@latest"]
-scope = ["user"]
-profiles = ["frontend"]
+profiles = ["global"]
 `
 
-func TestGatingNoSelectionKeepsAllServers(t *testing.T) {
+func TestGatingNoSelectionInstallsGlobalSkipsRepoLevel(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("")
 	f.writeManifest(gatingManifest)
@@ -42,27 +40,27 @@ func TestGatingNoSelectionKeepsAllServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
-	assertContains(t, out, "[mcp_servers.srv-tagged]")
-	assertContains(t, out, "[mcp_servers.srv-untagged]")
-	assertContains(t, out, "[mcp_servers.srv-user]")
-	assertNotContains(t, errb, "without matching profiles")
+	assertContains(t, out, "[mcp_servers.srv-global]")
+	assertNotContains(t, out, "srv-tagged")
+	assertNotContains(t, out, "srv-frontend")
+	assertContains(t, errb, "skipped 2 repo-level servers")
+	assertContains(t, errb, "agent-env init or --profile")
 }
 
-func TestGatingRepoProfilesGateProjectOnly(t *testing.T) {
+func TestGatingRepoProfilesGateRepoLevelOnly(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("")
 	f.writeManifest(gatingManifest)
 	f.writeRepo(`profiles = ["base"]`)
 
-	out, errb, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
+	out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
 	assertContains(t, out, "[mcp_servers.srv-tagged]")
-	assertNotContains(t, out, "srv-untagged")
-	assertContains(t, errb, "skipped 1 project servers without matching profiles")
-	// User rows ignore the profile gate entirely.
-	assertContains(t, out, "[mcp_servers.srv-user]")
+	assertNotContains(t, out, "srv-frontend")
+	// Global servers ignore the profile gate entirely.
+	assertContains(t, out, "[mcp_servers.srv-global]")
 }
 
 func TestGatingCLIProfileOverridesRepo(t *testing.T) {
@@ -74,7 +72,6 @@ name = "srv-base-only"
 agents = ["codex"]
 type = "stdio"
 command = "npx"
-scope = ["project"]
 profiles = ["base"]
 `)
 	f.writeRepo(`profiles = ["base"]`)
@@ -87,7 +84,7 @@ profiles = ["base"]
 	assertNotContains(t, out, "srv-base-only")
 }
 
-func TestGatingRepoAgentsNarrowProject(t *testing.T) {
+func TestGatingRepoAgentsNarrowRepoLevel(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("")
 	f.writeManifest(gatingManifest)
@@ -112,7 +109,17 @@ func TestGatingUnknownAgentRejected(t *testing.T) {
 	}
 }
 
-func TestProfilesCommand(t *testing.T) {
+func TestGlobalProfileCannotBeSelected(t *testing.T) {
+	f := newFixture(t)
+	f.writeSecrets("")
+	f.writeManifest(gatingManifest)
+	_, _, err := f.run(Filters{Command: CmdDryRun, Profiles: []string{"global"}, ProfileSeen: true, NonInteractive: true})
+	if err == nil || !strings.Contains(err.Error(), `"global" is a reserved profile keyword`) {
+		t.Fatalf("want reserved-global error, got %v", err)
+	}
+}
+
+func TestProfilesCommandExcludesGlobal(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("")
 	f.writeManifest(gatingManifest)
@@ -124,9 +131,9 @@ func TestProfilesCommand(t *testing.T) {
 		t.Fatalf("profiles output = %q", out)
 	}
 
-	f.writeManifest("[[servers]]\nname = \"a\"\nscope = [\"project\"]\n")
+	f.writeManifest("[[servers]]\nname = \"a\"\nprofiles = [\"global\"]\n")
 	_, _, err = f.run(Filters{Command: CmdProfiles})
-	if err == nil || !strings.Contains(err.Error(), "no profiles declared") {
+	if err == nil || !strings.Contains(err.Error(), "no selectable profiles declared") {
 		t.Fatalf("want no-profiles error, got %v", err)
 	}
 
@@ -139,7 +146,7 @@ func TestProfilesCommand(t *testing.T) {
 func TestListVerbatimAndFiltersRejected(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("")
-	body := "# comment\n[[servers]]\nname = \"a\"\nscope = [\"user\"]\n"
+	body := "# comment\n[[servers]]\nname = \"a\"\nprofiles = [\"global\"]\n"
 	f.writeManifest(body)
 	out, _, err := f.run(Filters{Command: CmdList})
 	if err != nil {
@@ -148,19 +155,9 @@ func TestListVerbatimAndFiltersRejected(t *testing.T) {
 	if out != body {
 		t.Fatalf("list not verbatim:\nwant %q\ngot %q", body, out)
 	}
-	_, _, err = f.run(Filters{Command: CmdList, Scopes: []string{"user"}, ScopeSeen: true})
+	_, _, err = f.run(Filters{Command: CmdList, Agents: []string{"codex"}, AgentSeen: true})
 	if err == nil || !strings.Contains(err.Error(), "not list") {
 		t.Fatalf("want list filter rejection, got %v", err)
-	}
-}
-
-func TestScopeValidation(t *testing.T) {
-	f := newFixture(t)
-	f.writeSecrets("")
-	f.writeManifest(gatingManifest)
-	_, _, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"bogus"}, ScopeSeen: true})
-	if err == nil || !strings.Contains(err.Error(), "unsupported scope filter 'bogus'") {
-		t.Fatalf("want scope error, got %v", err)
 	}
 }
 
@@ -187,13 +184,13 @@ agents = ["codex"]
 type = "stdio"
 command = "npx"
 args = ["-y", "${TOKEN}"]
-scope = ["user"]
+profiles = ["global"]
 [servers.env]
 A = "${TOKEN}"
 B = "${ENVONLY}"
 `)
 
-	out, _, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"user"}, ScopeSeen: true, NonInteractive: true})
+	out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
@@ -206,6 +203,7 @@ B = "${ENVONLY}"
 func TestRedactionCLICommands(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("token = \"proj-secret\"\n")
+	f.writeRepo(`profiles = ["base"]`)
 	f.writeManifest(`
 [[servers]]
 name = "cproj"
@@ -213,11 +211,11 @@ agents = ["claude"]
 type = "stdio"
 command = "npx"
 args = ["-y", "x"]
-scope = ["project"]
+profiles = ["base"]
 [servers.env]
 P = "${TOKEN}"
 `)
-	out, _, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"project"}, ScopeSeen: true, NonInteractive: true})
+	out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
@@ -231,6 +229,7 @@ P = "${TOKEN}"
 func TestAidenCommandConstructionAndRun(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("")
+	f.writeRepo(`profiles = ["base"]`)
 	logPath := filepath.Join(f.dir, "aiden.log")
 	installLogStub(t, filepath.Join(f.dir, "stub"), "aiden", logPath)
 	f.writeManifest(`
@@ -240,11 +239,10 @@ agents = ["aiden"]
 type = "stdio"
 command = "npx"
 args = ["-y", "a@latest"]
-scope = ["project"]
 profiles = ["base"]
 `)
 	// dry-run: the command is printed and nothing runs.
-	out, _, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"project"}, ScopeSeen: true, NonInteractive: true})
+	out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
@@ -254,7 +252,7 @@ profiles = ["base"]
 	}
 
 	// apply: the stub records the invocation (aiden failures are swallowed).
-	if _, _, err := f.run(Filters{Command: CmdApply, Scopes: []string{"project"}, ScopeSeen: true, NonInteractive: true}); err != nil {
+	if _, _, err := f.run(Filters{Command: CmdApply, NonInteractive: true}); err != nil {
 		t.Fatalf("apply failed: %v", err)
 	}
 	log := readFile(t, logPath)
@@ -271,10 +269,10 @@ name = "aidh"
 agents = ["aiden"]
 type = "streamable-http"
 url = "https://x/mcp"
-scope = ["user"]
+profiles = ["global"]
 bearer_token_env_var = "BT"
 `)
-	out, _, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"user"}, ScopeSeen: true, NonInteractive: true})
+	out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
@@ -290,9 +288,9 @@ name = "piserver"
 agents = ["pi"]
 type = "stdio"
 command = "npx"
-scope = ["user"]
+profiles = ["global"]
 `)
-	_, errb, err := f.run(Filters{Command: CmdDryRun, Scopes: []string{"user"}, ScopeSeen: true, NonInteractive: true})
+	_, errb, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
@@ -302,7 +300,7 @@ scope = ["user"]
 func TestNoActiveEntriesError(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("")
-	f.writeManifest("[[servers]]\nname = \"a\"\nscope = [\"project\"]\n")
+	f.writeManifest("[[servers]]\nname = \"a\"\nprofiles = [\"base\"]\n")
 	_, _, err := f.run(Filters{Command: CmdDryRun, Names: []string{"missing"}, NonInteractive: true})
 	if err == nil || !strings.Contains(err.Error(), "no active entries found") {
 		t.Fatalf("want no-active-entries error, got %v", err)
