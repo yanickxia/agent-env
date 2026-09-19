@@ -66,11 +66,12 @@ type runner struct {
 	secrets map[string]string
 	values  []string // secret values, for redaction
 
-	servers       []config.Server
-	repo          *config.RepoConfig
-	repoLayers    []string
-	effectiveProf string
-	effectiveList []string
+	servers        []config.Server
+	repo           *config.RepoConfig
+	repoLayers     []string
+	effectiveProf  string
+	effectiveList  []string
+	effectiveNames []string
 }
 
 func errUnsupportedUserAgent(agent string) error {
@@ -272,6 +273,14 @@ func (r *runner) computeEffectiveProfiles() {
 	sort.Strings(unique)
 	r.effectiveList = unique
 	r.effectiveProf = strings.Join(unique, ",")
+
+	names := []string{}
+	if r.repo != nil {
+		for _, n := range r.repo.Names {
+			names = appendUnique(names, n)
+		}
+	}
+	r.effectiveNames = names
 }
 
 func (r *runner) nameMatches(name string) bool {
@@ -474,11 +483,12 @@ func (r *runner) processManifest(mode string) error {
 			continue
 		}
 		if !row.Global {
-			if r.effectiveProf == "" {
-				repoLevelSkips++
-				continue
-			}
-			if !profilesIntersect(row.Profiles, r.effectiveProf) {
+			named := row.Name != "" && containsString(r.effectiveNames, row.Name)
+			profiled := len(row.Profiles) > 0 && profilesIntersect(row.Profiles, r.effectiveProf)
+			if !named && !profiled {
+				if r.effectiveProf == "" && len(r.effectiveNames) == 0 {
+					repoLevelSkips++
+				}
 				continue
 			}
 		}

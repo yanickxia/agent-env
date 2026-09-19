@@ -21,6 +21,16 @@ func splitTrimNonEmpty(raw string) []string {
 	return out
 }
 
+// stringInList reports whether want appears in list.
+func stringInList(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
 // profilesIntersect reports whether any profile in the comma-joined left also
 // appears in the comma-joined right.
 func profilesIntersect(left, right string) bool {

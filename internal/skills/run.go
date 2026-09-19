@@ -122,11 +122,12 @@ func (r *runner) processManifest(mode string) error {
 		source := config.ExpandSource(r.opts.Home, strings.TrimSpace(entry.Source))
 
 		if !entry.Global {
-			if r.effectiveProf == "" {
-				repoLevelSkips++
-				continue
-			}
-			if !profilesIntersect(entry.ProfilesRaw, r.effectiveProf) {
+			named := entry.Name != "" && stringInList(r.effectiveNames, entry.Name)
+			profiled := len(entry.Profiles) > 0 && profilesIntersect(entry.ProfilesRaw, r.effectiveProf)
+			if !named && !profiled {
+				if r.effectiveProf == "" && len(r.effectiveNames) == 0 {
+					repoLevelSkips++
+				}
 				continue
 			}
 		}
@@ -285,6 +286,7 @@ func (r *runner) resolveManifest(mode string) error {
 
 	fmt.Fprintf(r.out, "repo: %s\n", projectRoot)
 	fmt.Fprintf(r.out, "profiles: %s\n", r.effectiveProf)
+	fmt.Fprintf(r.out, "names: %s\n", strings.Join(r.effectiveNames, ","))
 	if r.repo != nil && len(r.repo.Agents) > 0 {
 		fmt.Fprintf(r.out, "agents: %s\n", strings.Join(r.repo.Agents, ","))
 	} else {
@@ -306,7 +308,9 @@ func (r *runner) resolveManifest(mode string) error {
 		if entry.Global {
 			continue
 		}
-		if !profilesIntersect(entry.ProfilesRaw, r.effectiveProf) {
+		named := entry.Name != "" && stringInList(r.effectiveNames, entry.Name)
+		profiled := len(entry.Profiles) > 0 && profilesIntersect(entry.ProfilesRaw, r.effectiveProf)
+		if !named && !profiled {
 			continue
 		}
 		resolvedAgents, ok := r.selectEntryAgents(false, entry.AgentsRaw)
@@ -320,6 +324,9 @@ func (r *runner) resolveManifest(mode string) error {
 		for _, item := range splitTrimNonEmpty(skillsRaw) {
 			fmt.Fprintf(r.out, "  %s\n", item)
 			fmt.Fprintf(r.out, "    source: %s\n", source)
+			if entry.Name != "" {
+				fmt.Fprintf(r.out, "    name: %s\n", entry.Name)
+			}
 			fmt.Fprintf(r.out, "    profiles: %s\n", entry.ProfilesRaw)
 			if resolvedAgents != "" {
 				fmt.Fprintf(r.out, "    agents: %s\n", resolvedAgents)

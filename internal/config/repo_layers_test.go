@@ -95,7 +95,7 @@ func TestWalkInvalidLayerErrorsWithPath(t *testing.T) {
 	}
 	writeLayer(t, filepath.Join(parent, ".agent-env.toml"), `profiles = ["base"]`)
 	bad := filepath.Join(repo, ".agent-env.toml")
-	writeLayer(t, bad, "agents = [\"codex\"]\n") // missing required profiles
+	writeLayer(t, bad, "profiles = [\"Bad_Name\"]\n") // non-kebab profile is invalid
 
 	_, _, err := WalkRepoConfigs(repo, "hint")
 	if err == nil || !strings.Contains(err.Error(), bad) {

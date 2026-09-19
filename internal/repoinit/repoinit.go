@@ -34,6 +34,7 @@ type Options struct {
 // Filters is the parsed CLI surface.
 type Filters struct {
 	Profiles []string
+	Names    []string
 	Agents   []string
 	Apply    bool
 	DryRun   bool
@@ -62,10 +63,11 @@ func Run(opts Options, f Filters) error {
 	}
 
 	profiles := dedupeTrim(f.Profiles)
+	names := dedupeTrim(f.Names)
 	agents := dedupeTrim(f.Agents)
 
-	if len(profiles) == 0 {
-		return fmt.Errorf("%s: at least one PROFILE is required", config.Prog)
+	if len(profiles) == 0 && len(names) == 0 {
+		return fmt.Errorf("%s: at least one PROFILE or --name is required", config.Prog)
 	}
 	for _, name := range profiles {
 		if !config.KebabCase(name) {
@@ -73,6 +75,14 @@ func Run(opts Options, f Filters) error {
 		}
 		if config.IsGlobalProfile(name) {
 			return fmt.Errorf("%s: \"global\" is a reserved profile keyword and cannot be selected in a repo config; list the repo-level tags you need instead", config.Prog)
+		}
+	}
+	for _, name := range names {
+		if !config.KebabCase(name) {
+			return fmt.Errorf("%s: invalid name '%s' (expected kebab-case matching ^[a-z][a-z0-9]*(-[a-z0-9]+)*$)", config.Prog, name)
+		}
+		if config.IsGlobalProfile(name) {
+			return fmt.Errorf("%s: \"global\" is a reserved keyword and cannot be used as a name", config.Prog)
 		}
 	}
 
@@ -91,19 +101,22 @@ func Run(opts Options, f Filters) error {
 	}
 
 	finalProfiles := []string{}
+	finalNames := []string{}
 	finalAgents := []string{}
 	mode := ""
 	vars := map[string]any{}
 	if existing != nil {
 		finalProfiles = append(finalProfiles, existing.profiles...)
+		finalNames = append(finalNames, existing.names...)
 		finalAgents = append(finalAgents, existing.agents...)
 		mode = existing.mode
 		vars = existing.vars
 	}
 	finalProfiles = appendUniqueItems(finalProfiles, profiles)
+	finalNames = appendUniqueItems(finalNames, names)
 	finalAgents = appendUniqueItems(finalAgents, agents)
 
-	content := renderContent(finalProfiles, finalAgents, mode, vars)
+	content := renderContent(finalProfiles, finalNames, finalAgents, mode, vars)
 
 	if f.DryRun {
 		fmt.Fprintf(opts.Stdout, "would write %s\n", configPath)
@@ -113,7 +126,12 @@ func Run(opts Options, f Filters) error {
 			return err
 		}
 		fmt.Fprintf(opts.Stdout, "wrote %s\n", configPath)
-		fmt.Fprintf(opts.Stdout, "profiles: %s\n", strings.Join(finalProfiles, ", "))
+		if len(finalProfiles) > 0 {
+			fmt.Fprintf(opts.Stdout, "profiles: %s\n", strings.Join(finalProfiles, ", "))
+		}
+		if len(finalNames) > 0 {
+			fmt.Fprintf(opts.Stdout, "names: %s\n", strings.Join(finalNames, ", "))
+		}
 		if len(finalAgents) > 0 {
 			fmt.Fprintf(opts.Stdout, "agents: %s\n", strings.Join(finalAgents, ", "))
 		}
@@ -170,6 +188,7 @@ func syncBin(opts Options) (string, error) {
 
 type existingConfig struct {
 	profiles []string
+	names    []string
 	agents   []string
 	mode     string
 	vars     map[string]any
@@ -185,7 +204,7 @@ func parseExisting(path string) (*existingConfig, error) {
 		return nil, fmt.Errorf("%s: invalid TOML in repo config: %s: %v", config.Prog, path, err)
 	}
 
-	allowed := map[string]bool{"profiles": true, "agents": true, "vars": true, "mode": true}
+	allowed := map[string]bool{"profiles": true, "names": true, "agents": true, "vars": true, "mode": true}
 	unknown := []string{}
 	for k := range raw {
 		if !allowed[k] {
@@ -194,7 +213,7 @@ func parseExisting(path string) (*existingConfig, error) {
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return nil, fmt.Errorf("%s: repo config key(s) not allowed: %s in %s; repo config may only declare profiles/agents/vars/mode (installation details and hooks such as post_install/source/skills/scope are not permitted)",
+		return nil, fmt.Errorf("%s: repo config key(s) not allowed: %s in %s; repo config may only declare profiles/names/agents/vars/mode (installation details and hooks such as post_install/source/skills/scope are not permitted)",
 			config.Prog, strings.Join(unknown, ", "), path)
 	}
 
@@ -214,6 +233,22 @@ func parseExisting(path string) (*existingConfig, error) {
 			}
 		}
 		out.profiles = list
+	}
+
+	if v, ok := raw["names"]; ok {
+		list, err := stringArray(v)
+		if err != nil {
+			return nil, fmt.Errorf("%s: \"names\" must be an array of strings in repo config: %s", config.Prog, path)
+		}
+		for _, name := range list {
+			if !config.KebabCase(name) {
+				return nil, fmt.Errorf("%s: \"names\" entry \"%s\" must match ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ in repo config: %s", config.Prog, name, path)
+			}
+			if config.IsGlobalProfile(name) {
+				return nil, fmt.Errorf("%s: \"global\" is a reserved keyword and cannot be used as a name in repo config: %s", config.Prog, path)
+			}
+		}
+		out.names = list
 	}
 
 	if v, ok := raw["agents"]; ok {
@@ -294,12 +329,17 @@ func isVarsValue(v any) bool {
 
 // --- rendering ---------------------------------------------------------------
 
-func renderContent(profiles, agents []string, mode string, vars map[string]any) string {
+func renderContent(profiles, names, agents []string, mode string, vars map[string]any) string {
 	var b strings.Builder
-	b.WriteString("# Managed by agent-env init. Profiles select which skill groups\n")
-	b.WriteString("# agent-env installs into this repo. Safe to edit by hand.\n")
+	b.WriteString("# Managed by agent-env init. profiles/names select which skill groups\n")
+	b.WriteString("# and individual entries agent-env installs into this repo. Safe to edit by hand.\n")
 	b.WriteString("\n")
-	b.WriteString("profiles = " + tomlArray(profiles) + "\n")
+	if len(profiles) > 0 {
+		b.WriteString("profiles = " + tomlArray(profiles) + "\n")
+	}
+	if len(names) > 0 {
+		b.WriteString("names = " + tomlArray(names) + "\n")
+	}
 	if len(agents) > 0 {
 		b.WriteString("agents = " + tomlArray(agents) + "\n")
 	}

@@ -61,12 +61,13 @@ type runner struct {
 	out  io.Writer
 	errw io.Writer
 
-	repo          *config.RepoConfig
-	repoMissing   bool
-	repoLoaded    bool
-	repoLayers    []string
-	effectiveProf string
-	effectiveList []string
+	repo           *config.RepoConfig
+	repoMissing    bool
+	repoLoaded     bool
+	repoLayers     []string
+	effectiveProf  string
+	effectiveList  []string
+	effectiveNames []string
 
 	claudeSkillsIsSymlink bool
 	claudeSkipNoticeShown bool
@@ -220,6 +221,15 @@ func (r *runner) computeEffectiveProfiles() {
 	sort.Strings(unique)
 	r.effectiveList = unique
 	r.effectiveProf = strings.Join(unique, ",")
+
+	// Names come only from the repo config (there is no CLI --name for skills).
+	names := []string{}
+	if r.repo != nil {
+		for _, n := range r.repo.Names {
+			names = appendUnique(names, n)
+		}
+	}
+	r.effectiveNames = names
 }
 
 func (r *runner) detectClaudeSymlink() {

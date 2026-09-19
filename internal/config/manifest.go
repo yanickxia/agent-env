@@ -81,6 +81,7 @@ type PostInstall struct {
 // otherwise the entry is repo-level and gated by the profile selection.
 type Install struct {
 	Source    string
+	Name      string
 	AgentsRaw string
 	SkillsRaw string
 	Agents    []string
@@ -124,10 +125,17 @@ func ParseManifest(path string) ([]Install, error) {
 	}
 
 	out := make([]Install, 0, len(entries))
+	seenNames := map[string]string{}
 	for _, e := range entries {
 		inst, err := parseInstall(e, path)
 		if err != nil {
 			return nil, err
+		}
+		if inst.Name != "" {
+			if prev, ok := seenNames[inst.Name]; ok {
+				return nil, fmt.Errorf("%s: duplicate install name \"%s\" in %s (also used by source %s)", Prog, inst.Name, path, prev)
+			}
+			seenNames[inst.Name] = inst.Source
 		}
 		out = append(out, inst)
 	}
@@ -199,13 +207,26 @@ func parseInstall(e any, manifestPath string) (Install, error) {
 	if err != nil {
 		return Install{}, err
 	}
-	profilesRaw, profiles, global, err := normalizeProfilesRequired(entry["profiles"], source)
+	profilesRaw, profiles, global, err := normalizeProfilesOptional(entry["profiles"], source)
 	if err != nil {
 		return Install{}, err
 	}
 
+	name := ""
+	if nv, ok := entry["name"]; ok && nv != nil {
+		s, isStr := nv.(string)
+		if !isStr {
+			return Install{}, fmt.Errorf("%s: \"name\" must be a string in source: %s", Prog, source)
+		}
+		name = strings.TrimSpace(s)
+		if name != "" && !kebabRe.MatchString(name) {
+			return Install{}, fmt.Errorf("%s: install name \"%s\" must be kebab-case (e.g. \"clickup\") in source: %s", Prog, name, source)
+		}
+	}
+
 	inst := Install{
 		Source:      source,
+		Name:        name,
 		AgentsRaw:   agentsRaw,
 		SkillsRaw:   skillsRaw,
 		Agents:      splitTrimNonEmpty(agentsRaw),
@@ -319,13 +340,13 @@ func normalizePostInstall(value any, source string) ([]PostInstall, string, erro
 	return out, strings.Join(records, SepRS), nil
 }
 
-// normalizeProfilesRequired validates the required profiles field. It returns
-// the comma-joined raw value, the deduped list, and whether "global" is present
-// (which makes the entry global). The reserved keyword must be the first token;
-// other tokens are classification tags only.
-func normalizeProfilesRequired(value any, source string) (string, []string, bool, error) {
+// normalizeProfilesOptional validates the profiles field, which is now
+// optional. Missing or empty profiles makes the entry "orphan": it belongs to
+// no group and can only be selected by name in the repo config. It returns the
+// comma-joined raw value, the deduped list, and whether "global" is present.
+func normalizeProfilesOptional(value any, source string) (string, []string, bool, error) {
 	if value == nil {
-		return "", nil, false, fmt.Errorf("%s: \"profiles\" is required; add profiles = [\"global\"] for a global (all-repo) entry, or profiles = [\"<tag>\", ...] (e.g. [\"base\"]) for a repo-level entry in source: %s", Prog, source)
+		return "", nil, false, nil
 	}
 	items, err := normalizeList(value, "profiles", source)
 	if err != nil {
@@ -346,11 +367,7 @@ func normalizeProfilesRequired(value any, source string) (string, []string, bool
 			ordered = append(ordered, name)
 		}
 	}
-	if len(ordered) == 0 {
-		return "", nil, false, fmt.Errorf("%s: \"profiles\" must not be empty; add profiles = [\"global\"] for a global (all-repo) entry, or profiles = [\"<tag>\", ...] for a repo-level entry in source: %s", Prog, source)
-	}
-	global := seen["global"]
-	return strings.Join(ordered, ","), ordered, global, nil
+	return strings.Join(ordered, ","), ordered, seen[GlobalProfile], nil
 }
 
 func normalizeInstaller(value any, source string) (string, error) {

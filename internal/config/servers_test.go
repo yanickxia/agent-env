@@ -116,8 +116,6 @@ func TestParseServersErrors(t *testing.T) {
 	}{
 		{"missing name", "[[servers]]\nprofiles = [\"base\"]\n", `must include a non-empty "name"`},
 		{"scope removed", "[[servers]]\nname = \"s\"\nscope = [\"project\"]\nprofiles = [\"base\"]\n", `"scope" was removed`},
-		{"profiles missing", "[[servers]]\nname = \"s\"\n", `"profiles" is required`},
-		{"profiles empty", "[[servers]]\nname = \"s\"\nprofiles = []\n", `"profiles" is required`},
 		{"agents not array", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\nagents = \"codex\"\n", `"agents" must be a string array`},
 		{"profiles not array", "[[servers]]\nname = \"s\"\nprofiles = \"base\"\n", `"profiles" must be a string array`},
 		{"type wrong type", "[[servers]]\nname = \"s\"\nprofiles = [\"base\"]\ntype = 3\n", `"type" must be a string`},

@@ -57,8 +57,8 @@ func TestInitCreatesNewConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "# Managed by agent-env init. Profiles select which skill groups\n" +
-		"# agent-env installs into this repo. Safe to edit by hand.\n" +
+	want := "# Managed by agent-env init. profiles/names select which skill groups\n" +
+		"# and individual entries agent-env installs into this repo. Safe to edit by hand.\n" +
 		"\n" +
 		"profiles = [\"base\", \"ark-mlops\"]\n" +
 		"agents = [\"codex\", \"opencode\"]\n"
@@ -132,7 +132,7 @@ func TestInitRejectsInvalidProfile(t *testing.T) {
 func TestInitRequiresProfile(t *testing.T) {
 	f := newFixture(t)
 	err := f.run(Filters{})
-	if err == nil || !strings.Contains(err.Error(), "at least one PROFILE is required") {
+	if err == nil || !strings.Contains(err.Error(), "at least one PROFILE or --name is required") {
 		t.Fatalf("want required-profile error, got %v", err)
 	}
 }
@@ -220,5 +220,45 @@ func assertContains(t *testing.T, haystack, needle string) {
 	t.Helper()
 	if !strings.Contains(haystack, needle) {
 		t.Fatalf("expected to contain %q, got:\n%s", needle, haystack)
+	}
+}
+
+func TestInitWritesAndMergesNames(t *testing.T) {
+	f := newFixture(t)
+	if err := f.run(Filters{Profiles: []string{"base"}, Names: []string{"clickup"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.content()
+	if !strings.Contains(got, `profiles = ["base"]`) || !strings.Contains(got, `names = ["clickup"]`) {
+		t.Fatalf("content missing selectors:\n%s", got)
+	}
+	if !strings.Contains(f.out.String(), "names: clickup") {
+		t.Fatalf("output missing names: %q", f.out.String())
+	}
+
+	// merge: existing names kept, new appended
+	if err := f.run(Filters{Names: []string{"playwright"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.content(), `names = ["clickup", "playwright"]`) {
+		t.Fatalf("names not merged:\n%s", f.content())
+	}
+}
+
+func TestInitNameOnlyIsValid(t *testing.T) {
+	f := newFixture(t)
+	if err := f.run(Filters{Names: []string{"clickup"}}); err != nil {
+		t.Fatalf("name-only init must be valid: %v", err)
+	}
+	if !strings.Contains(f.content(), `names = ["clickup"]`) {
+		t.Fatalf("content:\n%s", f.content())
+	}
+}
+
+func TestInitRejectsGlobalName(t *testing.T) {
+	f := newFixture(t)
+	err := f.run(Filters{Names: []string{"global"}})
+	if err == nil || !strings.Contains(err.Error(), "reserved keyword") {
+		t.Fatalf("want reserved-name error, got %v", err)
 	}
 }

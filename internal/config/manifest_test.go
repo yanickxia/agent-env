@@ -100,16 +100,6 @@ func TestParseManifestErrors(t *testing.T) {
 			want: `"scope" was removed`,
 		},
 		{
-			name: "profiles missing",
-			body: "[[installs]]\nsource = \"example/a\"\n",
-			want: `"profiles" is required`,
-		},
-		{
-			name: "profiles empty",
-			body: "[[installs]]\nsource = \"example/a\"\nprofiles = []\n",
-			want: `"profiles" must not be empty`,
-		},
-		{
 			name: "agents wrong type",
 			body: "[[installs]]\nsource = \"example/a\"\nagents = [1, 2]\nprofiles = [\"base\"]\n",
 			want: `"agents" must be a string or array`,

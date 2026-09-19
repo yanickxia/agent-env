@@ -120,7 +120,7 @@ agent-env apply    [...]                      # all-in-one：先 skills 再 MCP
 agent-env dry-run  [...]                      # all-in-one dry-run
 agent-env skills ...                          # skills 域
 agent-env mcp ...                             # MCP 域
-agent-env init PROFILE... [--agent A]... [--apply] [--dry-run]
+agent-env init PROFILE... [--name N]... [--agent A]... [--apply] [--dry-run]
 ```
 
 顶层 `apply` / `dry-run` 只接受两域**共享**的 flags：
@@ -173,13 +173,13 @@ agent-env mcp upsert-stdin --agent AGENT  # stdin→stdout：插入/替换该 ag
 ### init
 
 ```sh
-agent-env init PROFILE... [--agent AGENT]... [--apply] [--dry-run]
+agent-env init PROFILE... [--name N]... [--agent AGENT]... [--apply] [--dry-run]
 ```
 
 创建或合并 `<git toplevel>/.agent-env.toml`（fallback `$PWD`）：
 
 - 已存在时旧 profiles/agents 在前、CLI 新值去重追加；`mode`/`[vars]` 原样保留；原子写（同目录 temp+rename）；注释不保留。
-- 至少一个 kebab-case profile；非法名与保留字 `global` 均拒绝；`--agent` 支持逗号/重复。
+- 至少一个 PROFILE 或 `--name`；非法名与保留字 `global` 均拒绝；`--name`/`--agent` 支持逗号/重复。
 - `--dry-run` 打印路径与将写入的完整内容，不落盘。
 - `--apply` 写完后再执行 `agent-env skills apply --non-interactive --skip-unchanged`，透传其 exit code。
 
@@ -188,14 +188,15 @@ agent-env init PROFILE... [--agent AGENT]... [--apply] [--dry-run]
 repo 根目录的声明文件（建议提交；只做选择，不能执行命令）：
 
 ```toml
-profiles = ["base", "ark-mlops"]   # 必填，kebab-case 字符串数组；不可写 global
+profiles = ["base", "ark-mlops"]   # 可选，kebab-case 字符串数组；不可写 global
+names    = ["clickup", "playwright"]  # 可选，按条目 name 点名（跨域匹配）
 agents   = ["codex", "opencode"]   # 可选，收窄 repo 级条目的 agents
 mode     = "symlink"               # 可选，symlink | copy
 [vars]                             # 可选预留表
 team = "ark"
 ```
 
-只读命令与 apply 都接受：`--profile` 覆盖 repo 配置（临时，不写回）。缺少文件 = 无选择，不报错；文件非法（缺 profiles、非 kebab、含 `global`、未知 key）→ rc=1。
+只读命令与 apply 都接受：`--profile` 覆盖 repo 配置的 profiles（临时，不写回）。缺少文件 = 无选择，不报错；`profiles`/`names` 两者皆无 = 无选择（合法）；文件非法（非 kebab、含 `global`、未知 key）→ rc=1。
 
 ## 层级配置（mise 式发现）
 
@@ -222,29 +223,38 @@ team = "ark"
 
 有效 profiles（去重排序后）进 stamp 签名：父层配置变化会触发一次重装，属预期。`resolve`/`status` 会先列出发现的配置层（就近在前）与合并后的 profiles/agents；`init` 仍只写/合并 git toplevel（fallback cwd）那一层文件，不跨层合并。
 
-## Profile 语义
+## Profile 与 name 语义
 
-`profiles` 是每个 manifest 条目的必填字段，保留关键字 `global` 决定层级：
+manifest 条目有三态，由 `profiles` 是否包含保留关键字 `global` 决定：
 
 - `profiles = ["global"]` → **全局条目**：无条件安装，不受 repo 选择影响。可与其他 tag 混写（如 `["global", "base"]`），global 决定层级，其余 tag 仅分类。
-- `profiles = ["base", ...]`（不含 global）→ **repo 级条目**：按选择门禁。
-- `global` 是保留字，不能出现在 `.agent-env.toml` 或 `--profile` 中（不可选）。
+- `profiles = ["bytedance"]`（不含 global）→ **组条目（repo 级）**：按 repo 选择的 profiles 交集门禁。
+- **无 `profiles` 字段（或空数组）→ 游离条目**：不属于任何组，任何 profiles 选择都不命中；**只有被 repo 配置 `names` 点名才安装**。
 
-| 场景 | 全局条目 | repo 级条目 |
-|---|---|---|
-| 无选择（无 `.agent-env.toml` 无 `--profile`） | 照装 | 跳过并汇总提示 |
-| 有选择，条目 profiles 与选择有交集 | 照装 | 安装 |
-| 有选择，无交集 | 照装 | 跳过 |
-| repo 配置声明 agents | 不受影响 | agents ∩ repo agents，空则跳过 |
+`names` 是 repo 侧的**个体选择器**（`.agent-env.toml` 的 `names = [...]`）：按条目 `name` 跨域匹配——一条 `name = "clickup"` 同时命中同名的 skill 与 MCP server（`[[installs]]` 与 `[[servers]]` 同名允许，这是有意设计）。name 点名可越过 profile 分组；全局条目不受 names 影响。
 
-> 两域门禁已统一（skills 与 MCP 行为一致）。
+```toml
+# .agent-env.toml
+profiles = ["bytedance"]        # 组选择
+names    = ["playwright"]       # 个体点名（越过分组）
+```
+
+| 场景 | 全局条目 | 组条目 | 游离条目 |
+|---|---|---|---|
+| 无选择（无 `.agent-env.toml` 无 `--profile`） | 照装 | 跳过并汇总提示 | 跳过并汇总提示 |
+| 选择的 profiles 与条目 profiles 有交集 | 照装 | 安装 | — |
+| 条目 name ∈ 选择的 names | 照装 | 安装（越过分组） | 安装 |
+| 有选择但都不命中 | 照装 | 跳过 | 跳过 |
+| repo 配置声明 agents | 不受影响 | agents ∩ repo agents（含 name 选中的条目），空则跳过 | 同左 |
+
+> 两域门禁统一（skills 与 MCP 行为一致）。`global` 仍不可出现在 profiles/names 中。MCP `--name` CLI 过滤器是在“已活跃集合”内的二次收窄，与 repo 配置的 `names` 选择器是两层语义。
 
 ## 统一配置、secrets 与脱敏
 
 `config.toml` 一个文件两个顶层表：`[[installs]]`（skills）与 `[[servers]]`（MCP）；两个域各取所需、互相忽略。关键字段：
 
-- `[[installs]]`：`source`(必填)、`agents`、`skills`（`["*"]`=全部）、`profiles`(必填非空)、`mode`、`post_install`、`installer`（仅 `skills`）、`env`。
-- `[[servers]]`：`name`(必填)、`type`（`stdio`/`streamable-http`，另兼容 `sse`）、`command`、`args`、`url`、`env`、`headers`、`env_vars`、`bearer_token_env_var`、`profiles`(必填非空)、`startup_timeout_sec`。
+- `[[installs]]`：`source`(必填)、`name`(可选，kebab-case，跨 installs 唯一；供 repo `names` 点名)、`agents`、`skills`（`["*"]`=全部）、`profiles`(可选；缺省/空 = 游离)、`mode`、`post_install`、`installer`（仅 `skills`）、`env`。
+- `[[servers]]`：`name`(必填)、`type`（`stdio`/`streamable-http`，另兼容 `sse`）、`command`、`args`、`url`、`env`、`headers`、`env_vars`、`bearer_token_env_var`、`profiles`(可选；缺省/空 = 游离)、`startup_timeout_sec`。
 
 **agents**：本仓库统一使用 `["claude-code", "codex", "opencode"]`（`[[installs]]` 与 `[[servers]]` 都是）。MCP 域的 canonical 名是 `claude-code`；历史写法 `claude` 仍作为别名被接受，并在解析期归一化为 `claude-code`（`--agent claude` 与 `--agent claude-code` 等价）。trae / aiden / pi 的 writer 代码仍保留并受支持，但当前配置不再使用（休眠状态）；需要时把对应名字加进条目 `agents` 即可。
 

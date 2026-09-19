@@ -286,3 +286,35 @@ profiles = ["base"]
 		t.Fatalf("want informational notice, got %q", f.errb.String())
 	}
 }
+
+func TestAllInOneCrossDomainNameSelection(t *testing.T) {
+	f := newAllFixture(t)
+	if err := os.WriteFile(f.sOpts.RepoConfigPath, []byte("names = [\"clickup\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.writeManifest(t, `
+[[installs]]
+source = "example/clickup-skill"
+name = "clickup"
+agents = ["codex"]
+skills = ["cup"]
+
+[[servers]]
+name = "clickup"
+agents = ["codex"]
+type = "stdio"
+command = "npx"
+`)
+	sf := sharedFilters{command: skills.CmdDryRun, nonInteractive: true}
+	sErr, mErr := runAll(sf, f.sOpts, f.mOpts)
+	if sErr != nil || mErr != nil {
+		t.Fatalf("runAll errors: skills=%v mcp=%v", sErr, mErr)
+	}
+	out := f.out.String()
+	if !strings.Contains(out, "example/clickup-skill") {
+		t.Fatalf("install named clickup must be selected:\n%s", out)
+	}
+	if !strings.Contains(out, "mcp_servers.clickup") {
+		t.Fatalf("server named clickup must be selected:\n%s", out)
+	}
+}

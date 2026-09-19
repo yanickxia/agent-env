@@ -12,33 +12,30 @@ import (
 func newInitCmd() *cobra.Command {
 	var (
 		agents []string
+		names  []string
 		apply  bool
 		dryRun bool
 	)
 	c := &cobra.Command{
-		Use:   "init PROFILE... [--agent AGENT]... [--apply] [--dry-run]",
+		Use:   "init PROFILE... [--name N]... [--agent A]... [--apply] [--dry-run]",
 		Short: "Create or update the repo-level .agent-env.toml",
 		Long: `Create or update the repo-level .agent-env.toml for the current repository.
-The file records which skill profiles agent-env should install here.
+The file records which profiles and named entries agent-env should install here.
 
 Arguments:
   PROFILE              One or more kebab-case profile names to enable for this
-                       repository (e.g. base, ark-mlops). At least one is
-                       required. Invalid names are rejected and repeated names
-                       are de-duplicated, preserving order.
+                       repository (e.g. base, ark-mlops). Invalid names are
+                       rejected and repeated names are de-duplicated.
 
 Options:
-  --agent AGENT        Agent backend(s) for this repository (e.g. codex,
-                       opencode, trae). Repeatable and/or comma-separated
-                       (--agent codex,opencode). Tokens are trimmed and
-                       de-duplicated in order. Optional.
-  --apply              After writing the config, run
-                       agent-env skills apply --non-interactive --skip-unchanged
-                       from the repository root (repo-level profiles gate the
-                       install). The sync exit code is propagated.
-  --dry-run            Print the path and the full content that would be written,
-                       but do not touch the file. Combined with --apply, also
-                       print the sync command without running it.
+  --name NAME          Select individual entries by name (repeatable and/or
+                       comma-separated). A name matches both a [[installs]] and a
+                       [[servers]] entry with that name. Names bypass the profile
+                       grouping. At least one PROFILE or --name is required.
+  --agent AGENT        Agent backend(s) for this repository (repeatable/comma-separated).
+  --apply              After writing, run
+                       agent-env skills apply --non-interactive --skip-unchanged.
+  --dry-run            Print the path and content without writing.
 
 Behavior:
   The repository root is resolved with git rev-parse --show-toplevel (falling
@@ -53,13 +50,14 @@ Behavior:
   not preserved.
 
 Repository config schema (only these keys are permitted):
-  profiles = ["base", "ark-mlops"]   # string array of kebab-case profile names
+  profiles = ["base", "ark-mlops"]   # optional string array of kebab-case profiles
+  names    = ["clickup", "playwright"]  # optional string array of entry names
   agents   = ["codex", "opencode"]   # optional string array, non-empty entries
   mode     = "symlink"               # optional; exactly "symlink" or "copy"
   [vars]                             # optional table of install settings
   team = "ark"                       # string / number / boolean / string array
 
-  Repo config may only SELECT profiles for the repository. It must not carry
+  Repo config may only SELECT entries for the repository. It must not carry
   installation details or hooks: keys such as post_install, source or skills
   are rejected on purpose so a checked-in config cannot run commands.
 
@@ -72,6 +70,7 @@ Environment:
 			opts := resolveInitOptions()
 			fl := repoinit.Filters{
 				Profiles: args,
+				Names:    flattenComma(names),
 				Agents:   flattenComma(agents),
 				Apply:    apply,
 				DryRun:   dryRun,
@@ -88,6 +87,7 @@ Environment:
 		},
 	}
 	c.Flags().StringArrayVar(&agents, "agent", nil, "agent backend(s) for this repo (repeatable/comma-separated)")
+	c.Flags().StringArrayVar(&names, "name", nil, "select individual entries by name (repeatable/comma-separated)")
 	c.Flags().BoolVar(&apply, "apply", false, "after writing, run: agent-env skills apply --non-interactive --skip-unchanged")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print the path and content without writing")
 	return c

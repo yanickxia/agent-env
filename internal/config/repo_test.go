@@ -57,14 +57,9 @@ func TestLoadRepoConfigErrors(t *testing.T) {
 		want string
 	}{
 		{
-			name: "missing profiles",
-			body: "agents = [\"codex\"]\n",
-			want: "must declare at least one profile",
-		},
-		{
 			name: "unknown key",
 			body: "profiles = [\"base\"]\nsource = \"evil\"\n",
-			want: "only allows agents, mode, profiles, vars; found source",
+			want: "only allows agents, mode, names, profiles, vars; found source",
 		},
 		{
 			name: "non kebab",

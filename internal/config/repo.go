@@ -16,6 +16,7 @@ import (
 type RepoConfig struct {
 	Path     string
 	Profiles []string
+	Names    []string
 	Agents   []string
 	// AgentsDeclared reports whether the agents key was present (so an explicit
 	// empty array still counts as "declared" during layered merging).
@@ -48,10 +49,10 @@ func LoadRepoConfigWithHint(path, unknownKeyHint string) (cfg *RepoConfig, found
 		return nil, false, fmt.Errorf("%s: repo config is not valid TOML: %s: %v", Prog, path, err)
 	}
 
-	allowed := []string{"agents", "mode", "profiles", "vars"}
+	allowed := []string{"agents", "mode", "names", "profiles", "vars"}
 	unknown := []string{}
 	for k := range raw {
-		if k != "profiles" && k != "agents" && k != "mode" && k != "vars" {
+		if k != "profiles" && k != "names" && k != "agents" && k != "mode" && k != "vars" {
 			unknown = append(unknown, k)
 		}
 	}
@@ -65,21 +66,30 @@ func LoadRepoConfigWithHint(path, unknownKeyHint string) (cfg *RepoConfig, found
 	if err != nil {
 		return nil, false, err
 	}
+	names, err := normalizeStringList(raw["names"], "names", path)
+	if err != nil {
+		return nil, false, err
+	}
 	_, agentsPresent := raw["agents"]
 	agents, err := normalizeStringList(raw["agents"], "agents", path)
 	if err != nil {
 		return nil, false, err
 	}
 
-	if len(profiles) == 0 {
-		return nil, false, fmt.Errorf("%s: repo config must declare at least one profile: %s", Prog, path)
-	}
 	for _, name := range profiles {
 		if !kebabRe.MatchString(name) {
 			return nil, false, fmt.Errorf("%s: profile names must be kebab-case (e.g. \"ark-mlops\"), got \"%s\" in %s", Prog, name, path)
 		}
 		if IsGlobalProfile(name) {
 			return nil, false, fmt.Errorf("%s: \"global\" is a reserved profile keyword and cannot be selected in repo config: %s", Prog, path)
+		}
+	}
+	for _, name := range names {
+		if !kebabRe.MatchString(name) {
+			return nil, false, fmt.Errorf("%s: names must be kebab-case, got \"%s\" in %s", Prog, name, path)
+		}
+		if IsGlobalProfile(name) {
+			return nil, false, fmt.Errorf("%s: \"global\" is a reserved keyword and cannot be used as a name in repo config: %s", Prog, path)
 		}
 	}
 
@@ -107,6 +117,7 @@ func LoadRepoConfigWithHint(path, unknownKeyHint string) (cfg *RepoConfig, found
 	return &RepoConfig{
 		Path:           path,
 		Profiles:       profiles,
+		Names:          names,
 		Agents:         agents,
 		AgentsDeclared: agentsPresent,
 		Mode:           mode,
@@ -225,11 +236,18 @@ func WalkRepoConfigs(startDir, hint string) ([]*RepoConfig, []string, error) {
 func MergeRepoConfigs(configs []*RepoConfig) *RepoConfig {
 	merged := &RepoConfig{Vars: map[string]any{}}
 	seenProfiles := map[string]bool{}
+	seenNames := map[string]bool{}
 	for _, cfg := range configs {
 		for _, p := range cfg.Profiles {
 			if !seenProfiles[p] {
 				seenProfiles[p] = true
 				merged.Profiles = append(merged.Profiles, p)
+			}
+		}
+		for _, n := range cfg.Names {
+			if !seenNames[n] {
+				seenNames[n] = true
+				merged.Names = append(merged.Names, n)
 			}
 		}
 		if !merged.AgentsDeclared && cfg.AgentsDeclared {

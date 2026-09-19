@@ -149,9 +149,6 @@ func parseServerEntry(entry map[string]any, manifestPath string, order tableOrde
 	if err != nil {
 		return Server{}, err
 	}
-	if len(trimNonEmpty(profiles)) == 0 {
-		return Server{}, fmt.Errorf("%s: \"profiles\" is required; add profiles = [\"global\"] for a global (all-repo) entry, or profiles = [\"<tag>\", ...] for a repo-level entry in server: %s", Prog, name)
-	}
 	command, err := optionalStringField(entry, "command", name)
 	if err != nil {
 		return Server{}, err
