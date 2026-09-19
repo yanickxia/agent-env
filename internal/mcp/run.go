@@ -1,0 +1,770 @@
+// Package mcp implements the MCP domain: parsing/selection of [[servers]],
+// the codex/trae/opencode/claude writers, the aiden CLI path, and the
+// chezmoi-facing upsert-stdin command. Behaviour mirrors the retired zsh
+// agent-mcp-sync script.
+package mcp
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/yanickxia/agent-env/internal/config"
+)
+
+// Commands.
+const (
+	CmdApply       = "apply"
+	CmdDryRun      = "dry-run"
+	CmdList        = "list"
+	CmdProfiles    = "profiles"
+	CmdUpsertStdin = "upsert-stdin"
+)
+
+// Options carries resolved paths and injectable IO.
+type Options struct {
+	ManifestPath   string
+	SecretsPath    string
+	RepoConfigPath string
+	ProjectRoot    string
+	Home           string
+	WorkDir        string
+	ClaudeJSON     string
+
+	Stdout io.Writer
+	Stderr io.Writer
+	Stdin  io.Reader
+
+	LookupEnv func(string) string
+}
+
+// Filters is the normalized CLI filter set plus its seen flags.
+type Filters struct {
+	Command string
+
+	Scopes   []string
+	Agents   []string
+	Names    []string
+	Profiles []string
+
+	ScopeSeen   bool
+	AgentSeen   bool
+	ProfileSeen bool
+
+	NonInteractive bool
+	Interactive    bool
+}
+
+type runner struct {
+	opts    Options
+	f       Filters
+	out     io.Writer
+	errw    io.Writer
+	stdin   io.Reader
+	getenv  func(string) string
+	secrets map[string]string
+	values  []string // secret values, for redaction
+
+	servers       []config.Server
+	repo          *config.RepoConfig
+	effectiveProf string
+	effectiveList []string
+}
+
+func errUnsupportedUserAgent(agent string) error {
+	return fmt.Errorf("%s: no user-level writer for agent '%s' (expected codex, trae, opencode)", config.Prog, agent)
+}
+
+// Run executes one mcp command.
+func Run(opts Options, f Filters) error {
+	if opts.Stdout == nil {
+		opts.Stdout = os.Stdout
+	}
+	if opts.Stderr == nil {
+		opts.Stderr = os.Stderr
+	}
+	if opts.Stdin == nil {
+		opts.Stdin = os.Stdin
+	}
+	if opts.LookupEnv == nil {
+		opts.LookupEnv = os.Getenv
+	}
+	if opts.WorkDir == "" {
+		if wd, err := os.Getwd(); err == nil {
+			opts.WorkDir = wd
+		}
+	}
+	r := &runner{opts: opts, f: f, out: opts.Stdout, errw: opts.Stderr, stdin: opts.Stdin, getenv: opts.LookupEnv}
+
+	if err := r.normalize(); err != nil {
+		return err
+	}
+	if r.f.Interactive && r.f.NonInteractive {
+		return fmt.Errorf("%s: --interactive and --non-interactive cannot be used together", config.Prog)
+	}
+	if r.f.Interactive {
+		return fmt.Errorf("%s: --interactive is not supported by agent-env (fzf selection was not ported); pass --non-interactive or explicit filters", config.Prog)
+	}
+
+	switch f.Command {
+	case CmdList:
+		return r.cmdList()
+	case CmdProfiles:
+		return r.cmdProfiles()
+	case CmdUpsertStdin:
+		return r.cmdUpsertStdin()
+	case CmdApply, CmdDryRun:
+		return r.cmdSync()
+	default:
+		return fmt.Errorf("%s: unknown mcp command %q", config.Prog, f.Command)
+	}
+}
+
+func (r *runner) normalize() error {
+	scopes := []string{}
+	for _, raw := range r.f.Scopes {
+		tok := strings.TrimSpace(raw)
+		if tok == "" {
+			continue
+		}
+		switch tok {
+		case "all":
+			continue
+		case "user", "project":
+			scopes = appendUnique(scopes, tok)
+		default:
+			return fmt.Errorf("%s: unsupported scope filter '%s' (expected user, project, or all)", config.Prog, tok)
+		}
+	}
+	r.f.Scopes = scopes
+
+	agents := []string{}
+	for _, raw := range r.f.Agents {
+		tok := strings.TrimSpace(raw)
+		if tok == "" {
+			continue
+		}
+		agents = appendUnique(agents, tok)
+	}
+	r.f.Agents = agents
+
+	names := []string{}
+	for _, raw := range r.f.Names {
+		tok := strings.TrimSpace(raw)
+		if tok == "" {
+			continue
+		}
+		names = appendUnique(names, tok)
+	}
+	r.f.Names = names
+
+	profiles := []string{}
+	for _, raw := range r.f.Profiles {
+		tok := strings.TrimSpace(raw)
+		if tok == "" {
+			continue
+		}
+		if !config.KebabCase(tok) {
+			return fmt.Errorf("%s: invalid profile name '%s' (expected kebab-case, e.g. ark-mlops)", config.Prog, tok)
+		}
+		profiles = appendUnique(profiles, tok)
+	}
+	r.f.Profiles = profiles
+	return nil
+}
+
+func appendUnique(list []string, item string) []string {
+	for _, existing := range list {
+		if existing == item {
+			return list
+		}
+	}
+	return append(list, item)
+}
+
+func (r *runner) anyFilterSeen() bool {
+	return r.f.ScopeSeen || r.f.AgentSeen || r.f.ProfileSeen || len(r.f.Names) > 0
+}
+
+// loadSecrets parses secrets.toml once and caches redaction values.
+func (r *runner) loadSecrets() error {
+	if r.secrets != nil {
+		return nil
+	}
+	secrets, err := config.ParseSecrets(r.opts.SecretsPath)
+	if err != nil {
+		return err
+	}
+	r.secrets = secrets
+	for _, v := range secrets {
+		if v != "" {
+			r.values = append(r.values, v)
+		}
+	}
+	return nil
+}
+
+func (r *runner) resolveSecret(key string) string {
+	if key == "" {
+		return ""
+	}
+	if v, ok := r.secrets[key]; ok {
+		return v
+	}
+	if v, ok := r.secrets[strings.ToLower(key)]; ok {
+		return v
+	}
+	return r.getenv(key)
+}
+
+func (r *runner) redact(text string) string {
+	for _, v := range r.values {
+		text = strings.ReplaceAll(text, v, "***redacted***")
+	}
+	return text
+}
+
+func (r *runner) loadServers() error {
+	if r.servers != nil {
+		return nil
+	}
+	if err := r.loadSecrets(); err != nil {
+		return err
+	}
+	servers, err := config.ParseServers(r.opts.ManifestPath, r.resolveSecret)
+	if err != nil {
+		return err
+	}
+	r.servers = servers
+	return nil
+}
+
+func (r *runner) loadRepo() error {
+	path := r.opts.RepoConfigPath
+	if path == "" {
+		path = config.RepoConfigPath(r.getenv, r.opts.ProjectRoot)
+	}
+	cfg, found, err := config.LoadRepoConfigWithHint(path, "server definitions belong in the global manifest")
+	if err != nil {
+		return err
+	}
+	if found {
+		r.repo = cfg
+	}
+	return nil
+}
+
+func (r *runner) computeEffectiveProfiles() {
+	var selected []string
+	if len(r.f.Profiles) > 0 {
+		selected = r.f.Profiles
+	} else if r.repo != nil {
+		selected = r.repo.Profiles
+	}
+	unique := []string{}
+	for _, item := range selected {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		unique = appendUnique(unique, item)
+	}
+	sort.Strings(unique)
+	r.effectiveList = unique
+	r.effectiveProf = strings.Join(unique, ",")
+}
+
+func (r *runner) scopeMatches(scope string) bool {
+	if len(r.f.Scopes) == 0 {
+		return true
+	}
+	for _, f := range r.f.Scopes {
+		if scope == f {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *runner) nameMatches(name string) bool {
+	if len(r.f.Names) == 0 {
+		return true
+	}
+	for _, n := range r.f.Names {
+		if name == n {
+			return true
+		}
+	}
+	return false
+}
+
+func profilesIntersect(profiles []string, selection string) bool {
+	sel := map[string]bool{}
+	for _, tok := range strings.Split(selection, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok != "" {
+			sel[tok] = true
+		}
+	}
+	for _, p := range profiles {
+		p = strings.TrimSpace(p)
+		if p != "" && sel[p] {
+			return true
+		}
+	}
+	return false
+}
+
+// --- read-only commands ------------------------------------------------------
+
+func (r *runner) cmdList() error {
+	if r.anyFilterSeen() {
+		return fmt.Errorf("%s: filters are supported for apply and dry-run, not list", config.Prog)
+	}
+	data, err := os.ReadFile(r.opts.ManifestPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%s: manifest not found: %s", config.Prog, r.opts.ManifestPath)
+		}
+		return fmt.Errorf("%s: cannot read manifest %s: %v", config.Prog, r.opts.ManifestPath, err)
+	}
+	_, err = r.out.Write(data)
+	return err
+}
+
+func (r *runner) cmdProfiles() error {
+	if r.anyFilterSeen() {
+		return fmt.Errorf("%s: filters are supported for apply and dry-run, not profiles", config.Prog)
+	}
+	if _, err := os.Stat(r.opts.ManifestPath); err != nil {
+		return fmt.Errorf("%s: manifest not found: %s", config.Prog, r.opts.ManifestPath)
+	}
+	if err := r.loadServers(); err != nil {
+		return err
+	}
+	profiles := []string{}
+	for _, s := range r.servers {
+		for _, p := range s.Profiles {
+			profiles = appendUnique(profiles, p)
+		}
+	}
+	if len(profiles) == 0 {
+		return fmt.Errorf("%s: no profiles declared in %s", config.Prog, r.opts.ManifestPath)
+	}
+	sort.Strings(profiles)
+	for _, p := range profiles {
+		fmt.Fprintln(r.out, p)
+	}
+	return nil
+}
+
+func (r *runner) cmdUpsertStdin() error {
+	if len(r.f.Agents) != 1 {
+		return fmt.Errorf("%s: upsert-stdin requires exactly one --agent AGENT", config.Prog)
+	}
+	if r.f.ScopeSeen || r.f.ProfileSeen || len(r.f.Names) > 0 {
+		return fmt.Errorf("%s: upsert-stdin does not accept filters", config.Prog)
+	}
+	if _, err := os.Stat(r.opts.ManifestPath); err != nil {
+		return fmt.Errorf("%s: manifest not found: %s", config.Prog, r.opts.ManifestPath)
+	}
+	agent := r.f.Agents[0]
+	switch agent {
+	case "codex", "trae", "trae-cn", "opencode":
+	default:
+		return errUnsupportedUserAgent(agent)
+	}
+
+	data, err := io.ReadAll(r.stdin)
+	if err != nil {
+		return fmt.Errorf("%s: cannot read stdin: %v", config.Prog, err)
+	}
+	if err := r.loadServers(); err != nil {
+		return err
+	}
+	entries := r.userEntriesAll(agent)
+	block := ""
+	if len(entries) > 0 {
+		block, err = r.renderUserBlock(agent, entries)
+		if err != nil {
+			return err
+		}
+	}
+	out, err := agentUserTransform(string(data), agent, block)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(r.out, out)
+	return err
+}
+
+// --- apply / dry-run ---------------------------------------------------------
+
+func (r *runner) cmdSync() error {
+	if r.f.Command == CmdApply && !r.f.NonInteractive {
+		return fmt.Errorf("%s: interactive selection is not supported yet; pass --non-interactive or an explicit filter (--scope/--agent/--name/--profile)", config.Prog)
+	}
+	if err := r.loadServers(); err != nil {
+		return err
+	}
+	if len(r.f.Agents) > 0 {
+		if err := r.validateAgentFilters(); err != nil {
+			return err
+		}
+	}
+	if err := r.loadRepo(); err != nil {
+		return err
+	}
+	r.computeEffectiveProfiles()
+	return r.processManifest(r.f.Command)
+}
+
+func (r *runner) validateAgentFilters() error {
+	known := []string{}
+	for _, s := range r.servers {
+		if !r.scopeMatches(s.Scope) {
+			continue
+		}
+		for _, a := range s.Agents {
+			known = appendUnique(known, a)
+		}
+	}
+	knownSet := map[string]bool{}
+	for _, a := range known {
+		knownSet[a] = true
+	}
+	unknown := []string{}
+	for _, a := range r.f.Agents {
+		if !knownSet[a] {
+			unknown = append(unknown, a)
+		}
+	}
+	if len(unknown) > 0 {
+		msg := fmt.Sprintf("%s: unknown agent(s): %s", config.Prog, strings.Join(unknown, ", "))
+		if len(known) > 0 {
+			msg += fmt.Sprintf("\n%s: agents available in this scope: %s", config.Prog, strings.Join(known, ", "))
+		} else {
+			msg += fmt.Sprintf("\n%s: no MCP entries match the selected scope", config.Prog)
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
+type collected struct {
+	traeProject     []config.Server
+	codexProject    []config.Server
+	opencodeProject []config.Server
+	traeUser        []config.Server
+	codexUser       []config.Server
+	opencodeUser    []config.Server
+	claudeUser      []config.Server
+}
+
+func addByName(list []config.Server, seen map[string]bool, s config.Server) []config.Server {
+	if seen[s.Name] {
+		return list
+	}
+	seen[s.Name] = true
+	return append(list, s)
+}
+
+func (r *runner) processManifest(mode string) error {
+	projectRoot := r.opts.ProjectRoot
+
+	var c collected
+	seen := map[string]map[string]bool{
+		"trae-project": {}, "codex-project": {}, "opencode-project": {},
+		"trae-user": {}, "codex-user": {}, "opencode-user": {}, "claude-user": {},
+	}
+
+	profileSkipCount := 0
+	entryCount := 0
+
+	for _, row := range r.servers {
+		if !r.scopeMatches(row.Scope) || !r.nameMatches(row.Name) {
+			continue
+		}
+		if row.Scope == "project" && len(r.effectiveList) > 0 {
+			if !profilesIntersect(row.Profiles, r.effectiveProf) {
+				profileSkipCount++
+				continue
+			}
+		}
+
+		agents := append([]string{}, row.Agents...)
+		if len(r.f.Agents) > 0 {
+			agents = intersectOrdered(agents, r.f.Agents)
+			if len(agents) == 0 {
+				continue
+			}
+		}
+		if row.Scope == "project" && r.repo != nil && len(r.repo.Agents) > 0 {
+			agents = intersectOrdered(agents, r.repo.Agents)
+			if len(agents) == 0 {
+				continue
+			}
+		}
+
+		for _, agent := range agents {
+			switch agent {
+			case "codex":
+				if row.Scope == "project" {
+					c.codexProject = addByName(c.codexProject, seen["codex-project"], row)
+				} else {
+					c.codexUser = addByName(c.codexUser, seen["codex-user"], row)
+				}
+			case "trae", "trae-cn":
+				if row.Scope == "project" {
+					c.traeProject = addByName(c.traeProject, seen["trae-project"], row)
+				} else {
+					c.traeUser = addByName(c.traeUser, seen["trae-user"], row)
+				}
+			case "opencode":
+				if row.Scope == "project" {
+					c.opencodeProject = addByName(c.opencodeProject, seen["opencode-project"], row)
+				} else {
+					c.opencodeUser = addByName(c.opencodeUser, seen["opencode-user"], row)
+				}
+			case "aiden":
+				if err := r.handleAiden(mode, row); err != nil {
+					return err
+				}
+			case "claude":
+				if row.Scope == "user" {
+					c.claudeUser = addByName(c.claudeUser, seen["claude-user"], row)
+				} else if err := r.handleClaudeProject(mode, row); err != nil {
+					return err
+				}
+			case "":
+				// no agent declared: nothing to do
+			default:
+				fmt.Fprintf(r.errw, "%s: unsupported agent '%s' for server '%s'; skipped\n", config.Prog, agent, row.Name)
+			}
+		}
+		entryCount++
+	}
+
+	if profileSkipCount > 0 {
+		fmt.Fprintf(r.errw, "%s: skipped %d project servers without matching profiles\n", config.Prog, profileSkipCount)
+	}
+
+	traeProjectPath := filepath.Join(projectRoot, ".trae", "traecli.yaml")
+	codexProjectPath := filepath.Join(projectRoot, ".codex", "config.toml")
+	opencodeProjectPath := filepath.Join(projectRoot, ".opencode", "opencode.jsonc")
+
+	if len(c.traeProject) > 0 {
+		rendered := renderTrae(c.traeProject)
+		if mode == CmdDryRun {
+			fmt.Fprintf(r.out, "# %s: would write Trae project MCP config: %s\n", config.Prog, traeProjectPath)
+			r.printBlock(rendered)
+		} else if err := writeProjectBlock(traeProjectPath, rendered, traeBegin, traeEnd); err != nil {
+			return err
+		}
+	}
+	if len(c.codexProject) > 0 {
+		rendered := renderCodex(c.codexProject)
+		if mode == CmdDryRun {
+			fmt.Fprintf(r.out, "# %s: would write Codex project MCP config: %s\n", config.Prog, codexProjectPath)
+			r.printBlock(rendered)
+		} else if err := writeProjectBlock(codexProjectPath, rendered, codexBegin, codexEnd); err != nil {
+			return err
+		}
+	}
+	if len(c.opencodeProject) > 0 {
+		rendered := renderOpencode(c.opencodeProject)
+		if mode == CmdDryRun {
+			fmt.Fprintf(r.out, "# %s: would write OpenCode project MCP config: %s\n", config.Prog, opencodeProjectPath)
+			r.printBlock(rendered)
+		} else if err := writeOpencodeProjectBlock(opencodeProjectPath, rendered); err != nil {
+			return err
+		}
+	}
+
+	// User-scope writers. codex/trae/opencode re-collect ALL user entries for
+	// the agent (matching agent_user_transform); claude uses the filtered set.
+	if len(c.traeUser) > 0 {
+		if err := r.writeUserTarget(mode, "trae", filepath.Join(r.opts.Home, ".trae", "traecli.yaml"), r.userEntriesAll("trae")); err != nil {
+			return err
+		}
+	}
+	if len(c.codexUser) > 0 {
+		if err := r.writeUserTarget(mode, "codex", filepath.Join(r.opts.Home, ".codex", "config.toml"), r.userEntriesAll("codex")); err != nil {
+			return err
+		}
+	}
+	if len(c.opencodeUser) > 0 {
+		if err := r.writeUserTarget(mode, "opencode", filepath.Join(r.opts.Home, ".config", "opencode", "opencode.jsonc"), r.userEntriesAll("opencode")); err != nil {
+			return err
+		}
+	}
+	if len(c.claudeUser) > 0 {
+		rendered, err := renderClaudeUser(c.claudeUser, r.resolveSecret, func(m string) { fmt.Fprintln(r.errw, m) })
+		if err != nil {
+			return err
+		}
+		if mode == CmdDryRun {
+			fmt.Fprintf(r.out, "# %s: would write Claude user MCP config: %s\n", config.Prog, r.opts.ClaudeJSON)
+			r.printBlock(rendered)
+		} else {
+			if err := r.patchClaude(rendered); err != nil {
+				return err
+			}
+		}
+	}
+
+	if entryCount == 0 {
+		return fmt.Errorf("%s: no active entries found in %s", config.Prog, r.opts.ManifestPath)
+	}
+	return nil
+}
+
+func intersectOrdered(declared, filter []string) []string {
+	out := []string{}
+	for _, item := range declared {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		for _, f := range filter {
+			if item == f {
+				out = append(out, item)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// userEntriesAll is the unfiltered user-scope collection shared with
+// upsert-stdin (agent_user_transform semantics).
+func (r *runner) userEntriesAll(agent string) []config.Server {
+	out := []config.Server{}
+	seen := map[string]bool{}
+	for _, s := range r.servers {
+		if s.Scope != "user" {
+			continue
+		}
+		if !containsString(s.Agents, agent) {
+			continue
+		}
+		if seen[s.Name] {
+			continue
+		}
+		seen[s.Name] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+func containsString(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *runner) renderUserBlock(agent string, entries []config.Server) (string, error) {
+	switch agent {
+	case "codex":
+		return renderCodex(entries), nil
+	case "trae", "trae-cn":
+		return renderTrae(entries), nil
+	case "opencode":
+		return renderOpencode(entries), nil
+	default:
+		return "", errUnsupportedUserAgent(agent)
+	}
+}
+
+func (r *runner) writeUserTarget(mode, agent, target string, entries []config.Server) error {
+	input := ""
+	if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+		input = readFileOrEmpty(target)
+	}
+	block := ""
+	if len(entries) > 0 {
+		var err error
+		block, err = r.renderUserBlock(agent, entries)
+		if err != nil {
+			return err
+		}
+	}
+
+	if mode == CmdDryRun {
+		transformed, err := agentUserTransform(input, agent, block)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(r.out, "# %s: would write %s MCP config: %s\n", config.Prog, userTargetLabel(agent), target)
+		r.printBlock(transformed)
+		return nil
+	}
+
+	transformed, err := agentUserTransform(input, agent, block)
+	if err != nil {
+		return err
+	}
+	existed := fileExists(target)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("%s: cannot create %s: %v", config.Prog, filepath.Dir(target), err)
+	}
+	if err := os.WriteFile(target, []byte(transformed), 0o644); err != nil {
+		return fmt.Errorf("%s: cannot write %s: %v", config.Prog, target, err)
+	}
+	if !existed && agent == "codex" {
+		if err := os.Chmod(target, 0o600); err != nil {
+			return fmt.Errorf("%s: cannot chmod %s: %v", config.Prog, target, err)
+		}
+	}
+	return nil
+}
+
+func (r *runner) patchClaude(rendered string) error {
+	target := r.opts.ClaudeJSON
+	if target == "" {
+		target = config.ClaudeJSONPath(r.getenv, r.opts.Home)
+	}
+	raw, err := os.ReadFile(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintf(r.errw, "%s: %s not found, skip\n", config.Prog, target)
+			return nil
+		}
+		return fmt.Errorf("%s: cannot read %s: %v", config.Prog, target, err)
+	}
+	out := patchClaudeJSON(raw, rendered)
+	if err := os.WriteFile(target, out, 0o600); err != nil {
+		return fmt.Errorf("%s: cannot write %s: %v", config.Prog, target, err)
+	}
+	count := countTopLevelKeys(rendered)
+	fmt.Fprintf(r.out, "%s: patched mcpServers in %s (%d servers)\n", config.Prog, target, count)
+	return nil
+}
+
+func countTopLevelKeys(rendered string) int {
+	return scanTopLevelKeyCount(rendered)
+}
+
+func userTargetLabel(agent string) string {
+	switch agent {
+	case "codex":
+		return "Codex user"
+	case "trae", "trae-cn":
+		return "Trae user"
+	case "opencode":
+		return "OpenCode user"
+	default:
+		return agent + " user"
+	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}

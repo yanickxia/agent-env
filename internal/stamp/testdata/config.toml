@@ -1,0 +1,457 @@
+# agent-env 全局配置（agent-skills-sync + agent-mcp-sync 共用）。
+#
+# 本文件由 agent-env repo 维护，经 chezmoi symlink 到
+# ~/.config/agent-env/config.toml。两个顶层表：
+#   [[installs]]  skills 安装清单（agent-skills-sync 读取，忽略 [[servers]]）
+#   [[servers]]   MCP server 清单（agent-mcp-sync 读取，忽略 [[installs]]）
+#
+# secrets 不写在本文件里：放在 ~/.config/agent-env/secrets.toml（chezmoi private，
+# 不进 repo），格式为 key = "value"。清单里的 ${VAR} 在渲染时解析：先按 key
+# （exact / lowercase）查 secrets.toml，再回退到环境变量。例如 browserless 的
+# ${BROWSERLESS_TOKEN} 对应 secrets.toml 的 browserless_token = "..."。
+#
+# agentbuddy 安装器已弃用（见下方 mlops 条目的 TODO）。
+
+# ==================== skills（[[installs]]） ====================
+
+[[installs]]
+source = "microsoft/playwright-cli"
+agents = ["claude-code", "codex", "opencode"]
+skills = ["playwright-cli"]
+scope = "user"
+mode = "symlink"
+
+[[installs]]
+source = "larksuite/cli"
+agents = ["claude-code", "codex", "opencode"]
+skills = ["*"]
+scope = "user"
+mode = "symlink"
+
+[[installs]]
+source = "git@code.byted.org:byteapi/bytedcli.git"
+agents = ["claude-code", "codex", "opencode"]
+skills = ["bytedcli"]
+scope = "user"
+mode = "symlink"
+
+[[installs]]
+source = "git@code.byted.org:machinelearning/super-ops.git"
+agents = ["claude-code", "codex", "opencode"]
+skills = ["*"]
+scope = "user"
+mode = "symlink"
+
+# Luma Vision Skill：识图能力的轻量版（相对 agent-mcp 里的 luma MCP）。
+# skill 名为 luma-vision（仓库目录叫 vision-skill，但 skills CLI 按 SKILL.md
+# 的 frontmatter name 匹配，这里必须写 luma-vision）。
+# 依赖 zsh/config.d/common/luma.zsh 导出的 CUSTOM_BASE_URL / CUSTOM_API_KEY /
+# CUSTOM_MODEL_NAME——skill 只能从系统环境变量读配置。
+# 作为 MCP 之外的按需 skill 备胎；当前只同步到 claude-code / codex / opencode。
+[[installs]]
+source = "JochenYang/luma-mcp"
+agents = ["claude-code", "codex", "opencode"]
+skills = ["luma-vision"]
+scope = "user"
+mode = "symlink"
+
+# agent-vision Skill（用户自研 @yanickxia/agent-vision）：与 agent-mcp 里的
+# agent-vision MCP 配套，教 Agent 何时调用 analyze_image / analyze_video。
+# skill 名为 agent-vision（skills CLI 按 SKILL.md frontmatter name 匹配）。
+# 主机制走 MCP 工具（env 来自 MCP 配置）；npx fallback 走 CLI（需 shell env）。
+# 当前只同步到 claude-code / codex / opencode。
+[[installs]]
+source = "yanickxia/agent-vision"
+agents = ["claude-code", "codex", "opencode"]
+skills = ["agent-vision"]
+scope = "user"
+mode = "symlink"
+
+# 搜索三件套（@yanickxia/skills）：brave-search / serpapi-search / youcom-search。
+# 替代已移除的 mcphub-search MCP（9 个工具常驻上下文），skill 按需加载。
+# 默认直连各家官方 API；BASE_URL 环境变量指向 ai-proxy search 适配器时走统一
+# 网关（上游真实 key 由 ai-proxy 注入，客户端只持网关入站 key）。
+# env 依赖 zsh/config.d/common/ai-proxy.zsh 导出：
+#   BRAVE_SEARCH_BASE_URL / BRAVE_SEARCH_API_KEY（X-Subscription-Token header）
+#   SERPAPI_BASE_URL / SERPAPI_API_KEY（api_key query param）
+#   YOU_API_BASE_URL / YDC_API_KEY（Authorization: Bearer）
+[[installs]]
+source = "yanickxia/skills"
+agents = ["claude-code", "codex", "opencode"]
+skills = ["brave-search", "serpapi-search", "youcom-search"]
+scope = "user"
+mode = "symlink"
+
+# ClickUp CLI Skill（krodak/clickup-cli）：40+ 命令覆盖任务/sprint/评论/时间跟踪/
+# checklist/goals/webhook，skill 名为 clickup。
+#
+# 仅同步到 claude-code / codex / opencode；opencode 已能承载其它 skill 类型。
+# 避免同时给 trae / aiden / kimi-cli 也装一份，减少多路 skill 管理面的漂移。
+#
+# SKILL.md 约 103 KB，是目前最大的一个；progressive disclosure 只预载
+# name+description，闲置开销可忽略，但一旦触发就整块进上下文。
+#
+# 鉴权：cup 读 CU_API_TOKEN 环境变量，值复用 .chezmoidata/clickup.toml 的
+# clickup_token（与 clickup MCP 同一个 token）。需要时再配 zsh 导出。
+[[installs]]
+source = "krodak/clickup-cli"
+agents = ["claude-code", "codex", "opencode"]
+skills = ["clickup"]
+scope = "user"
+mode = "symlink"
+post_install = [
+  { run = "npm install -g @krodak/clickup-cli", if_missing = "cup" },
+]
+
+# TODO: 改用 git 仓库源后重新启用（agentbuddy 路径弃用）
+# Ark Engineering SRE 泳道 skill：标准 Git repo 源，供 npx skills add 安装。
+# [[installs]]
+# source = "https://code.byted.org/machinelearning/mlops-cicd-skills"
+# agents = ["claude-code", "codex", "opencode"]
+# skills = ["mlops-lane"]
+# scope = "user"
+# mode = "symlink"
+#
+# [[installs]]
+# source = "yanick/agent-skills"
+# https://github.com/vercel-labs/skills?tab=readme-ov-file#available-agents
+# agents = ["claude-code", "codex", "opencode"]
+# skills = ["*"]
+# scope = "user"
+# mode = "symlink"
+
+
+[[installs]]
+source = "git@code.byted.org:xiayan.cn/skills.git"
+agents = ["claude-code", "codex", "opencode"]
+skills = ["*"]
+scope = "user"
+mode = "symlink"
+
+# ==================== MCP servers（[[servers]]） ====================
+
+[[servers]]
+name = "playwright"
+agents = ["codex", "claude", "trae", "opencode", "aiden"]
+type = "stdio"
+command = "npx"
+args = ["-y", "@playwright/mcp@latest"]
+scope = ["project"]
+profiles = ["base"]
+tags = ["browser", "testing"]
+
+# 自托管 Browserless 远程浏览器（办公室/家中两台 NAS 各一套 ghcr.io/browserless/chromium）：
+# 经 --cdp-endpoint 复用远端 Chromium，与上面的本地 playwright（本机拉起浏览器）互补。
+# 注意：
+#   - endpoint 必须是 wss:// 而非 https://：入口前有 nginx basic auth，https 会先做
+#     /json/version HTTP 发现、被 401 挡住；wss:// 走 WebSocket 升级跳过 basic auth，
+#     由 query 里的 token 鉴权
+#   - launch 参数必须预先 URL 编码：{"headless":false} → %7B%22headless%22%3Afalse%7D
+#     （远端有头模式，方便观察）
+#   - 备用入口（同一 token，默认入口不可达时手工替换）：
+#       wss://browserless.inner.yanick.site/  （仅办公内网可达）
+#       wss://browserless.vnet.yanick.site/   （家中 NAS 实例，任意 EasyTier/VNet 节点可达）
+[[servers]]
+name = "browserless"
+agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+type = "stdio"
+command = "npx"
+args = ["-y", "@playwright/mcp@latest", "--cdp-endpoint", "wss://browserless.office.vnet.yanick.site/?token=${BROWSERLESS_TOKEN}&launch=%7B%22headless%22%3Afalse%7D"]
+scope = ["project"]
+profiles = ["base"]
+tags = ["browser", "playwright", "remote"]
+
+[[servers]]
+name = "chrome-devtools"
+agents = ["codex", "claude", "trae", "opencode", "aiden"]
+type = "stdio"
+command = "npx"
+args = ["-y", "chrome-devtools-mcp@latest"]
+scope = ["project"]
+profiles = ["base"]
+tags = ["browser", "devtools", "debugging", "performance"]
+
+[[servers]]
+name = "browseros"
+agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+type = "streamable-http"
+url = "http://127.0.0.1:9000/mcp"
+scope = ["project"]
+profiles = ["base"]
+tags = ["browser"]
+
+[[servers]]
+name = "super-ops"
+agents = ["codex", "claude", "trae", "opencode", "aiden"]
+type = "streamable-http"
+url = "https://superops.byted.org/mcp"
+bearer_token_env_var = "OPS_API_TOKEN"
+scope = ["project"]
+profiles = ["base"]
+tags = ["internal", "ops"]
+
+# opencode 不在此列：oh-my-opencode-slim 插件会自行注册 remote context7
+# (https://mcp.context7.com/mcp) 并覆盖本定义，opencode.jsonc 里写这份 stdio
+# 定义是死配置（2026-09-17 已移除）。其余 host（codex/claude/trae/aiden/pi）
+# 无插件覆盖，仍走本定义。
+[[servers]]
+name = "context7"
+agents = ["codex", "claude", "trae", "aiden", "pi"]
+type = "stdio"
+command = "npx"
+args = ["-y", "@upstash/context7-mcp@latest"]
+scope = ["user"]
+tags = ["docs", "context", "reference"]
+
+[[servers]]
+name = "bytedcli"
+agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+type = "stdio"
+command = "bytedcli"
+args = ["mcp"]
+scope = ["project"]
+profiles = ["base"]
+tags = ["internal", "bytedance", "mcp"]
+[servers.env]
+BYTEDCLI_NO_AUTO_UPGRADE = "1"
+
+# [[servers]]
+# name = "mcphub-mini-search"
+# agents = ["codex", "claude", "trae", "opencode", "aiden"]
+# type = "streamable-http"
+# url = "https://mcphub.inner.yanick.site/mcp/mini-search"
+# scope = ["user"]
+# tags = ["search"]
+# [servers.headers]
+# Authorization = "Bearer ${MCPHUB_TOKEN}"
+
+[[servers]]
+name = "mcphub-search"
+agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+type = "streamable-http"
+url = "https://mcphub.inner.yanick.site/mcp/search"
+scope = ["project"]
+profiles = ["base"]
+tags = ["search"]
+[servers.headers]
+Authorization = "Bearer ${MCPHUB_TOKEN}"
+
+
+[[servers]]
+name = "mcphub-notes"
+agents = ["codex", "claude", "trae", "opencode", "aiden"]
+type = "streamable-http"
+url = "https://mcphub.vnet.yanick.site/mcp/notes"
+scope = ["project"]
+profiles = ["base"]
+tags = ["notes"]
+[servers.headers]
+Authorization = "Bearer ${MCPHUB_TOKEN}"
+
+
+
+[[servers]]
+name = "mcphub-memos"
+agents = ["codex", "claude", "trae", "opencode", "aiden"]
+type = "streamable-http"
+url = "https://mcphub.vnet.yanick.site/mcp/memos"
+scope = ["project"]
+profiles = ["base"]
+tags = ["memos"]
+[servers.headers]
+Authorization = "Bearer ${MCPHUB_TOKEN}"
+
+# 视觉理解（luma-mcp）：本地 stdio 启动，经 ai-proxy 调用 doubao 视觉模型。
+# 单一工具 image_understand，为无原生视觉能力的 agent（codex/opencode/trae 等）提供识图。
+# 注意：
+#   - CUSTOM_BASE_URL 必须带 /v1，因为 luma 的 CUSTOM_PATH 默认为 /chat/completions
+#   - env 的值必须写成字符串，agent-mcp-sync 校验 env 为 string map，裸整数会中断同步
+#   - 传图用本地文件路径；luma 对远程 URL 有 SSRF 防护，会拒绝内网地址
+#
+# 关于 MAX_TOKENS / CUSTOM_TIMEOUT_MS（单张 64x64 测试图实测，非推断）：
+# 当前用 doubao-seed-2.0-mini-nothink（nothink 变体，实测极速识图），不走 reasoning，
+# max_tokens 实际用不满，32768 只是预留上限、不会变慢；CUSTOM_TIMEOUT_MS=120s 同理留足余量。
+#
+# 若换回思考模型 doubao-seed-2.1-turbo，luma 内置的长 BASE_VISION_PROMPT 会放大 reasoning，
+# max_tokens 给太小会让推理反复churn、反而更慢：
+#     4096 -> 180s | 8192(默认) -> 125s | 16384 -> 138s | 32768 -> 73s
+# 32768 是思考模型实测最快的取值；但 73s 仍超过 luma 默认的 60s 超时，会触发超时重试
+# （总耗时翻到 130s+），所以思考模型必须同时把 CUSTOM_TIMEOUT_MS 提到 120s。
+[[servers]]
+name = "luma"
+agents = ["codex", "claude", "trae", "opencode", "aiden"]
+type = "stdio"
+command = "npx"
+args = ["-y", "luma-mcp@latest"]
+scope = ["project"]
+profiles = ["base"]
+tags = ["vision", "image", "ocr"]
+[servers.env]
+MODEL_PROVIDER = "custom"
+CUSTOM_BASE_URL = "https://ai-proxy.inner.yanick.site/v1"
+CUSTOM_API_KEY = "${LUMA_CUSTOM_API_KEY}"
+CUSTOM_MODEL_NAME = "doubao-seed-2.0-mini-nothink"
+MAX_TOKENS = "32768"
+CUSTOM_TIMEOUT_MS = "120000"
+
+# agent-vision（用户自研 @yanickxia/agent-vision）：MCP server + skill，经 ai-proxy 调用 doubao 视觉模型。
+# 与 luma（image_understand 单图）互补：提供 analyze_image + analyze_video（视频抽帧理解）。
+# 轻量单一 provider：无免费模型列表、无 fallback 竞速、无 watchdog（见 repo README）。
+# npm 包已发布，npx 自动下载；ffmpeg 由 @ffmpeg-installer/ffmpeg 按平台内置，无需本地安装。
+[[servers]]
+name = "agent-vision"
+agents = ["codex", "claude", "trae", "opencode", "aiden"]
+type = "stdio"
+command = "npx"
+args = ["-y", "@yanickxia/agent-vision"]
+scope = ["project"]
+profiles = ["base"]
+tags = ["vision", "image", "video"]
+[servers.env]
+AGENT_VISION_BASE_URL = "https://ai-proxy.inner.yanick.site/v1"
+AGENT_VISION_API_KEY = "${AGENT_VISION_API_KEY}"
+AGENT_VISION_MODEL = "doubao-seed-2.0-mini-nothink"
+
+# ClickUp 官方托管 MCP（public beta），streamable-http，暴露 58 个工具：
+# 任务增删改查、Docs、评论、Chat 频道、时间跟踪、提醒、成员解析、跨 workspace 搜索。
+# 端点固定为 https://mcp.clickup.com/mcp，无需本地进程。
+#
+# 鉴权（与官方文档相反，实测结论）：
+#   文档 FAQ 写「只支持 OAuth，不能用自己的 API key」——过期了。
+#   实测 Authorization: Bearer pk_... 能正常 tools/call 拿到真实数据；
+#   换成伪造 token 立刻 401 invalid_token，证明鉴权真实生效。
+#   必须带 Bearer 前缀，裸 Authorization: pk_... 是 401。
+#   所以这里走 headers 明文注入，不需要走 OAuth 浏览器授权流程。
+#
+# workspace 必须显式指定：ClickUp MCP 没有「列出 workspace」的工具，
+# 不给 workspace 时任何工具都返回 "Please specify which workspace to use"。
+# 用 x-workspace-id 头钉死默认值（见 .chezmoidata/clickup.toml），这样 agent
+# 不必知道 id 就能直接查询。副作用：连接被锁死在该 workspace，调用时传别的
+# workspace_id 会被拒（"not accessible in this session"）。
+#
+# agents 为何不含 codex / opencode：
+#   agent-mcp-sync 对这两个 agent 的 http 渲染只认 bearer_token_env_var，
+#   [servers.headers] 里的字面量会被整段丢弃（codex 见 parse_headers_to_bearer_env，
+#   opencode 见 render 分支只在 bearer_token_env_var 非空时才写 headers）。
+#   结果是 x-workspace-id 传不过去、连 Authorization 都没有，注册了也是 401。
+#   claude / trae / aiden 三家都会把 headers 逐条下发，所以只挂这三个。
+#   要覆盖 codex/opencode，得先给 agent-mcp-sync 加多 header 支持，而非改这里。
+[[servers]]
+name = "clickup"
+agents = ["claude", "trae", "aiden"]
+type = "streamable-http"
+url = "https://mcp.clickup.com/mcp"
+scope = ["project"]
+profiles = ["base"]
+tags = ["tasks", "docs", "project-management"]
+[servers.headers]
+Authorization = "Bearer ${CLICKUP_TOKEN}"
+x-workspace-id = "908140"
+
+# Optional fields for codex rendering:
+# env_vars = ["GITHUB_TOKEN"]
+# startup_timeout_sec = 20
+
+# Optional fields for sync-based agents like Claude and Trae:
+# [servers.env]
+# DISPLAY = ":0"
+#
+# [servers.headers]
+# Authorization = "Bearer ${TOKEN}"
+#
+# disabled = false
+# disabled_tools = ["*pattern*", "exact_match"]
+# timeout = "100s"
+# work_dir = "/tmp/my/path"
+# scope = "user"  # 可选: user (所有项目) | project (仅当前项目)
+# tags = ["tag1", "tag2"]  # 用于 tag-filter 过滤
+
+# sessions（nicknisi/sessions）：本地 stdio MCP，对本机所有 AI coding agent
+# （Claude Code / Codex / Pi / OpenCode）的会话历史建一个统一索引，提供
+# 搜索历史会话、recall、standup、weekly-summary、memory 等工具。
+# 本体是 ~/.local/bin/sessions（v1.27.0），--mcp 切 stdio server 模式。
+# scope=user：历史搜索不绑定项目，放全局；和 context7 / bytedcli 一致。
+# 注意：本机 Claude Code 可能已通过 sessions 的 plugin marketplace 体系
+# （plugin/.mcp.json）注册过同款 server，那里走插件、不经本 manifest；
+# 本条目覆盖的是 codex / opencode / trae / aiden 这几家走配置文件的 host。
+[[servers]]
+name = "sessions"
+agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+type = "stdio"
+command = "sessions"
+args = ["--mcp"]
+scope = ["project"]
+profiles = ["base"]
+tags = ["sessions", "history", "recall", "memory"]
+
+
+[[servers]]
+name = "ai-proxy"
+agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+type = "streamable-http"
+url = "https://ai-proxy.inner.yanick.site/mcp"
+bearer_token_env_var = "AI_PROXY_API_KEY"   # codex/opencode 只认这个；需在 agent 环境里 export
+scope = ["project"]                            # 或 ["project"] 只给当前项目
+profiles = ["base"]
+tags = ["vision", "image", "video", "proxy"]
+[servers.headers]
+Authorization = "Bearer ${AI_PROXY_TOKEN}"
+
+# ================ Example Configurations ================
+
+# Example 1: stdio type (local process)
+# [[servers]]
+# name = "filesystem"
+# agents = ["codex", "claude", "trae", "opencode"]
+# type = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+# scope = "project"  # 项目级别共享
+# tags = ["filesystem", "io"]
+
+# Example 2: streamable-http type (remote server)
+# [[servers]]
+# name = "github"
+# agents = ["codex", "claude", "trae", "opencode"]
+# type = "streamable-http"
+# url = "https://api.githubcopilot.com/mcp"
+# bearer_token_env_var = "GITHUB_PAT"
+# scope = "user"  # 所有项目可用
+# tags = ["vcs", "github"]
+
+# Example 3: sse type (Server-Sent Events)
+# [[servers]]
+# name = "asana"
+# agents = ["claude", "trae"]
+# type = "sse"
+# url = "https://mcp.asana.com/sse"
+#
+# [servers.headers]
+# X-API-Key = "${ASANA_API_KEY}"
+
+# Example 4: http type with env vars
+# [[servers]]
+# name = "postgres"
+# agents = ["codex", "claude", "trae", "opencode"]
+# type = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-postgres"]
+#
+# [servers.env]
+# DATABASE_URL = "postgres://user:pass@localhost:5432/db"
+
+# Example 5: OpenAI 兼容的 Custom Provider + chezmoi 模板变量
+# 本文件是 .tmpl，凭据统一从 .chezmoidata/ 取，不要在此硬编码密钥。
+# [[servers]]
+# name = "some-vision"
+# agents = ["codex", "claude"]
+# type = "stdio"
+# command = "npx"
+# args = ["-y", "some-mcp@latest"]
+#
+# [servers.env]
+# CUSTOM_BASE_URL = "{{ .ai_proxy_url }}/v1"   # 注意补 /v1
+# CUSTOM_API_KEY = "${AI_PROXY_TOKEN}"
+# MAX_TOKENS = "4096"                                   # env 值必须是字符串
+
+# ================ End of Examples ================
