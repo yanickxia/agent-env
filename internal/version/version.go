@@ -6,6 +6,6 @@
 //	go build -ldflags "-X github.com/yanickxia/agent-env/internal/version.Version=v1.2.3" ./cmd/agent-env
 package version
 
-// Version is the agent-env version. It defaults to a development version and
+// Version is the agent-env version. It defaults to "dev" for local builds and
 // is overridden at build time for tagged releases.
-var Version = "0.1.0"
+var Version = "dev"

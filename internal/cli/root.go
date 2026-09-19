@@ -5,15 +5,29 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/yanickxia/agent-env/internal/updatecheck"
 	"github.com/yanickxia/agent-env/internal/version"
 )
 
 // Execute runs the command tree and returns the process exit code.
 func Execute() int {
 	root := newRootCmd()
-	if err := root.Execute(); err != nil {
+
+	// Start the update check before the command runs; it is best-effort and
+	// only ever writes to stderr, so stdout pipes (upsert-stdin) stay clean.
+	noticeCh := updatecheck.Start(updatecheck.Options{
+		Current: version.Version,
+		Skip:    isUpdateCommand(os.Args),
+	})
+
+	err := root.Execute()
+	printUpdateNotice(noticeCh)
+
+	if err != nil {
 		var ee *ExitError
 		if errors.As(err, &ee) {
 			if ee.Msg != "" {
@@ -27,6 +41,32 @@ func Execute() int {
 	return 0
 }
 
+// isUpdateCommand reports whether the invocation is `agent-env update`, which
+// must not trigger a check for an even newer release.
+func isUpdateCommand(args []string) bool {
+	for _, a := range args[1:] {
+		if a == "update" {
+			return true
+		}
+		if !strings.HasPrefix(a, "-") {
+			return false
+		}
+	}
+	return false
+}
+
+// printUpdateNotice waits briefly for the async check and prints at most one
+// line to stderr. It never affects the exit code.
+func printUpdateNotice(ch <-chan string) {
+	select {
+	case msg := <-ch:
+		if msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+		}
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "agent-env",
@@ -36,7 +76,8 @@ func newRootCmd() *cobra.Command {
 			"  agent-env apply     run both domains (skills, then MCP)\n" +
 			"  agent-env skills    manage skills only\n" +
 			"  agent-env mcp       manage MCP servers only\n" +
-			"  agent-env init      create or update the repo-level .agent-env.toml",
+			"  agent-env init      create or update the repo-level .agent-env.toml\n" +
+			"  agent-env update    upgrade this binary to the latest release",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       version.Version,
@@ -54,6 +95,7 @@ func newRootCmd() *cobra.Command {
 		newSkillsCmd(),
 		newMCPCmd(),
 		newInitCmd(),
+		newUpdateCmd(),
 		newVersionCmd(),
 	)
 	return root

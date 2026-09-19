@@ -47,6 +47,31 @@ zsh install.zsh uninstall                 # 默认移除 ~/.local/bin/agent-env
 zsh install.zsh uninstall --bin-dir DIR   # 或指定目录
 ```
 
+## 升级
+
+日常升级用 `agent-env update`（`install.zsh` 仍是首次 bootstrap 安装）：
+
+```sh
+agent-env update                 # 安装最新 release，原子替换自身
+agent-env update --version v0.3.0
+```
+
+- 已是最新 → `already up to date (vX.Y.Z)`（exit 0）；成功 → `updated vOLD → vNEW`。
+- 下载 release 的 `agent-env_<os>_<arch>.tar.gz` 并校验 sha256，失败拒绝安装；替换失败会提示改用 `zsh install.zsh install`。
+- `dev` 构建也可运行 update（会用最新 release 覆盖 dev 构建并注明）。
+
+**启动自动检查**（异步、best-effort）：发现新版本时在 **stderr** 打一行
+`agent-env: vX.Y.Z is available (current: vOLD); run 'agent-env update' to upgrade`。
+只写 stderr，**绝不污染 stdout**（`agent-env mcp upsert-stdin` 的管道输出保持纯净）。检查通过
+`releases/latest` 的 302 `Location` 解析版本，不调用 GitHub API。
+
+频控与缓存：
+
+- 缓存：`$XDG_CACHE_HOME/agent-env/update-check.json`（默认 `~/.cache/agent-env/update-check.json`），字段 `{latest, checked_at, notified_at}`。
+- TTL 24h：24h 内直接用缓存不发请求；提示也 24h 最多一次（同版本），chezmoi apply 多次调用 agent-env 不会刷屏。
+- 跳过：`dev`（非 semver）构建、`AGENT_ENV_NO_UPDATE_CHECK=1|true`、以及 `agent-env update` 命令自身。
+- 网络失败/超时（2s）→ 全静默。
+
 ## Bootstrap
 
 ```sh
@@ -265,6 +290,8 @@ dry-run 脱敏：**来自 secrets.toml 的所有值出现即替换为 `***redact
 | `AGENT_ENV_REPO_CONFIG` | 覆盖 repo 配置路径（旧名 `AGENT_SKILLS_REPO_CONFIG` 静默兼容） |
 | `CLAUDE_JSON` | 覆盖 `~/.claude.json`（全局 claude MCP patch 目标） |
 | `AGENT_SKILLS_SYNC_BIN` | 覆盖 `agent-env init --apply` 调用的可执行文件（默认 re-exec 自身） |
+| `AGENT_ENV_NO_UPDATE_CHECK` | `1`/`true` 关闭启动升级检查 |
+| `AGENT_ENV_RELEASE_BASE` | 覆盖 release base URL（默认 `https://github.com/yanickxia/agent-env`；internal/testing 用） |
 
 ## 测试
 
