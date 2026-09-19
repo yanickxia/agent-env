@@ -13,9 +13,23 @@
 
 ## 安装
 
-三种方式，任选其一：
+推荐用一键安装脚本，它下载对应平台的 Release tarball、校验 sha256 并安装到 `~/.local/bin`（二进制由安装器拥有）：
 
-1. **下载 Release 二进制**：在 GitHub Release 页下载对应平台的 `agent-env_<os>_<arch>.tar.gz`（`darwin`/`linux` × `amd64`/`arm64`），解压得到 `agent-env` 可执行文件与 `README.md`，放进 `PATH` 即可。同时提供 `.sha256` 校验文件。
+```sh
+curl -fsSL https://raw.githubusercontent.com/yanickxia/agent-env/master/install.zsh | zsh
+```
+
+其他方式：
+
+1. **clone 后本地安装**：
+
+   ```sh
+   git clone https://github.com/yanickxia/agent-env ~/codes/mine/agent-env
+   cd ~/codes/mine/agent-env && zsh install.zsh install
+   ```
+
+   指定版本/目录：`zsh install.zsh install --version v0.1.0 --bin-dir /tmp/bin`。脚本只依赖 `curl`/`tar`/`shasum`，支持 `darwin`/`linux` × `amd64`/`arm64`。
+
 2. **`go install`**（需 Go 1.25+）：
 
    ```sh
@@ -24,25 +38,31 @@
 
    二进制落在 `$(go env GOPATH)/bin/agent-env`。
 
-3. **源码构建**：
+3. **手动下载 Release / 源码构建**：
+   - GitHub Release 页下载 `agent-env_<os>_<arch>.tar.gz`（内含二进制与 `README.md`），并附 `.sha256` 校验文件。
+   - 源码构建：`go build -o bin/agent-env ./cmd/agent-env`（gitignored 产物）。
 
-   ```sh
-   go build -o bin/agent-env ./cmd/agent-env
-   ```
+**卸载**：
 
-   `bin/agent-env` 是 gitignored 的构建产物。
+```sh
+zsh install.zsh uninstall                 # 默认移除 ~/.local/bin/agent-env
+zsh install.zsh uninstall --bin-dir DIR   # 或指定目录
+```
 
 > 版本号默认为开发版本，Release 构建通过 `-ldflags -X github.com/yanickxia/agent-env/internal/version.Version=<tag>` 注入 tag；`agent-env version` / `--version` 读取该值。
 
 ## Bootstrap
 
 ```sh
-git clone <agent-env repo> ~/codes/mine/agent-env   # 1. 检出内容源头
-cd ~/codes/mine/agent-env && go build -o bin/agent-env ./cmd/agent-env   # 2. 构建二进制
-chezmoi apply                                        # 3. 接线 symlink + secrets + 钩子（自动同步 user 级 skills/MCP）
+# 1. 安装二进制（安装器拥有 ~/.local/bin/agent-env）
+curl -fsSL https://raw.githubusercontent.com/yanickxia/agent-env/master/install.zsh | zsh
+
+# 2. 检出内容源头，接线配置与钩子
+git clone https://github.com/yanickxia/agent-env ~/codes/mine/agent-env
+chezmoi apply
 ```
 
-`chezmoi apply` 会：symlink `~/.local/bin/agent-env -> <repo>/bin/agent-env`、`~/.config/agent-env/config.toml -> <repo>/config.toml`、写 `~/.config/agent-env/secrets.toml`（chezmoi private），并跑 user 级同步钩子。
+`chezmoi apply` 会：symlink `~/.config/agent-env/config.toml -> <repo>/config.toml`、写 `~/.config/agent-env/secrets.toml`（chezmoi private），并跑 user 级同步钩子（自动同步 user 级 skills/MCP）。二进制 `~/.local/bin/agent-env` 由安装器（`install.zsh`）拥有，**不再由 chezmoi 管理**；91/92 钩子按 PATH → `~/.local/bin/agent-env` 查找它。
 
 ## 快速开始
 
@@ -182,7 +202,7 @@ dry-run 脱敏：**来自 secrets.toml 的所有值出现即替换为 `***redact
 
 | 位置 | 作用 |
 |---|---|
-| `dot_local/bin/symlink_agent-env` | symlink → `<repo>/bin/agent-env`（PATH 中可直接用） |
+| `~/.local/bin/agent-env` | 由 `install.zsh` 安装并拥有（**不再是 chezmoi symlink**）；91/92 钩子按 PATH → `~/.local/bin/agent-env` 查找 |
 | `dot_config/agent-env/symlink_config.toml` | symlink → `<repo>/config.toml` |
 | `dot_config/agent-env/private_secrets.toml` | 全部 token（chezmoi private，不进 repo） |
 | `.chezmoiscripts/run_onchange_after_91_agent-env-skills.sh.tmpl` | user 级 skills 自动同步（fingerprint = `<repo>/config.toml` sha256；容错不阻塞） |
@@ -200,7 +220,9 @@ dry-run 脱敏：**来自 secrets.toml 的所有值出现即替换为 `***redact
 2. `build` job（matrix）：交叉编译 `darwin/amd64`、`darwin/arm64`、`linux/amd64`、`linux/arm64`，版本号由 tag 经 `-ldflags -X .../internal/version.Version=${GITHUB_REF_NAME}` 注入；每个平台打 `agent-env_<os>_<arch>.tar.gz`（内含二进制 + `README.md`），并生成 `.sha256`。
 3. `release` job：汇总产物，用 `softprops/action-gh-release@v2` 创建 Release（附全部 tar.gz + sha256，自动生成 release notes）。
 
-`.github/workflows/ci.yml` 在每次 push（所有分支）与 pull_request 上跑同样的检查。注意：仓库首次 push 后工作流才会生效。
+这些 Release 产物正是 `install.zsh` 消费的对象（`releases/latest/download/...` 与 `releases/download/<tag>/...`），因此发版后安装脚本无需改动即可安装新版本。
+
+`.github/workflows/ci.yml` 在每次 push（所有分支）与 pull_request 上跑同样的检查。
 
 ## 环境变量
 
@@ -234,6 +256,7 @@ internal/repoinit/             # agent-env init
 internal/stamp/                # stamp 读写 + 签名
 internal/version/              # 版本变量（ldflags 注入）
 config.toml                    # 全局配置：[[installs]] + [[servers]]，无 secrets
+install.zsh                    # 安装器（下载 Release tar.gz / 校验 sha256 / 安装·卸载）
 .github/workflows/{ci,release}.yml
 go.mod / go.sum
 bin/agent-env                  # 构建产物（gitignored）
