@@ -203,7 +203,7 @@ func TestUpsertStdinUnsupportedAgent(t *testing.T) {
 	f.writeSecrets("")
 	f.writeManifest(upsertManifest)
 	_, _, err := f.run(Filters{Command: CmdUpsertStdin, Agents: []string{"claude"}, AgentSeen: true})
-	if err == nil || !strings.Contains(err.Error(), "no user-level writer for agent 'claude'") {
+	if err == nil || !strings.Contains(err.Error(), "no user-level writer for agent 'claude-code'") {
 		t.Fatalf("want unsupported agent error, got %v", err)
 	}
 }

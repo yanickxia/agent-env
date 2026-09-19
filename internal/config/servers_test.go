@@ -74,6 +74,9 @@ bearer_token_env_var = "BT"
 	if full.Name != "srv-full" || !full.Global {
 		t.Fatalf("global detection wrong: %+v", full)
 	}
+	if got := strings.Join(full.Agents, ","); got != "codex,claude-code" {
+		t.Fatalf("agents must canonicalize claude -> claude-code, got %q", got)
+	}
 	if got := strings.Join(full.Profiles, ","); got != "global,base,ark-mlops" {
 		t.Fatalf("profiles = %q", got)
 	}

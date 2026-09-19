@@ -145,7 +145,7 @@ func TestClaudeUserApplyPatch(t *testing.T) {
 	f.writeManifest(`
 [[servers]]
 name = "u-claude"
-agents = ["claude"]
+agents = ["claude-code"]
 type = "stdio"
 command = "npx"
 args = ["-y", "ucd@latest"]
@@ -187,7 +187,7 @@ func TestPatchClaudeMissingFileSkips(t *testing.T) {
 	f.writeManifest(`
 [[servers]]
 name = "u-claude"
-agents = ["claude"]
+agents = ["claude-code"]
 type = "stdio"
 command = "npx"
 profiles = ["global"]

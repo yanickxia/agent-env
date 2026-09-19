@@ -128,7 +128,7 @@ func (r *runner) normalize() error {
 		if tok == "" {
 			continue
 		}
-		agents = appendUnique(agents, tok)
+		agents = appendUnique(agents, config.CanonicalAgent(tok))
 	}
 	r.f.Agents = agents
 
@@ -485,7 +485,7 @@ func (r *runner) processManifest(mode string) error {
 		}
 
 		for _, agent := range agents {
-			switch agent {
+			switch config.CanonicalAgent(agent) {
 			case "codex":
 				if row.Global {
 					c.codexUser = addByName(c.codexUser, seen["codex-user"], row)
@@ -508,7 +508,7 @@ func (r *runner) processManifest(mode string) error {
 				if err := r.handleAiden(mode, row); err != nil {
 					return err
 				}
-			case "claude":
+			case "claude-code":
 				if row.Global {
 					c.claudeUser = addByName(c.claudeUser, seen["claude-user"], row)
 				} else if err := r.handleClaudeProject(mode, row); err != nil {
@@ -606,7 +606,7 @@ func intersectOrdered(declared, filter []string) []string {
 			continue
 		}
 		for _, f := range filter {
-			if item == f {
+			if item == config.CanonicalAgent(strings.TrimSpace(f)) {
 				out = append(out, item)
 				break
 			}

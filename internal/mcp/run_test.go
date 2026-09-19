@@ -207,7 +207,7 @@ func TestRedactionCLICommands(t *testing.T) {
 	f.writeManifest(`
 [[servers]]
 name = "cproj"
-agents = ["claude"]
+agents = ["claude-code"]
 type = "stdio"
 command = "npx"
 args = ["-y", "x"]
@@ -305,4 +305,52 @@ func TestNoActiveEntriesError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no active entries found") {
 		t.Fatalf("want no-active-entries error, got %v", err)
 	}
+}
+
+// --- claude alias canonicalization ------------------------------------------
+
+func TestClaudeAliasTriggersClaudeWriter(t *testing.T) {
+	f := newFixture(t)
+	f.writeSecrets("")
+	f.writeManifest(`
+[[servers]]
+name = "c-alias"
+agents = ["claude"]
+type = "stdio"
+command = "npx"
+args = ["-y", "x"]
+profiles = ["global"]
+`)
+	out, _, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	assertContains(t, out, "would write Claude user MCP config")
+}
+
+func TestAgentFilterClaudeAlias(t *testing.T) {
+	f := newFixture(t)
+	f.writeSecrets("")
+	f.writeRepo(`profiles = ["base"]`)
+	f.writeManifest(`
+[[servers]]
+name = "c1"
+agents = ["claude-code"]
+type = "stdio"
+command = "npx"
+args = ["-y", "x"]
+profiles = ["base"]
+`)
+	outCC, _, err := f.run(Filters{Command: CmdDryRun, Agents: []string{"claude-code"}, AgentSeen: true, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("claude-code filter failed: %v", err)
+	}
+	outC, _, err := f.run(Filters{Command: CmdDryRun, Agents: []string{"claude"}, AgentSeen: true, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("claude alias filter failed: %v", err)
+	}
+	if outCC != outC {
+		t.Fatalf("--agent claude and --agent claude-code must match:\n--- claude-code ---\n%s\n--- claude ---\n%s", outCC, outC)
+	}
+	assertContains(t, outCC, "claude mcp add c1")
 }

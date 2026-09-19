@@ -132,7 +132,7 @@ mode = "symlink"
 
 [[servers]]
 name = "playwright"
-agents = ["codex", "claude", "trae", "opencode", "aiden"]
+agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@playwright/mcp@latest"]
@@ -152,7 +152,7 @@ tags = ["browser", "testing"]
 #       wss://browserless.vnet.yanick.site/   （家中 NAS 实例，任意 EasyTier/VNet 节点可达）
 [[servers]]
 name = "browserless"
-agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@playwright/mcp@latest", "--cdp-endpoint", "wss://browserless.office.vnet.yanick.site/?token=${BROWSERLESS_TOKEN}&launch=%7B%22headless%22%3Afalse%7D"]
@@ -161,7 +161,7 @@ tags = ["browser", "playwright", "remote"]
 
 [[servers]]
 name = "chrome-devtools"
-agents = ["codex", "claude", "trae", "opencode", "aiden"]
+agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "chrome-devtools-mcp@latest"]
@@ -170,7 +170,7 @@ tags = ["browser", "devtools", "debugging", "performance"]
 
 [[servers]]
 name = "browseros"
-agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "http://127.0.0.1:9000/mcp"
 profiles = ["base"]
@@ -178,7 +178,7 @@ tags = ["browser"]
 
 [[servers]]
 name = "super-ops"
-agents = ["codex", "claude", "trae", "opencode", "aiden"]
+agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://superops.byted.org/mcp"
 bearer_token_env_var = "OPS_API_TOKEN"
@@ -191,7 +191,7 @@ tags = ["internal", "ops"]
 # 无插件覆盖，仍走本定义。
 [[servers]]
 name = "context7"
-agents = ["codex", "claude", "trae", "aiden", "pi"]
+agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@upstash/context7-mcp@latest"]
@@ -200,7 +200,7 @@ tags = ["docs", "context", "reference"]
 
 [[servers]]
 name = "bytedcli"
-agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "bytedcli"
 args = ["mcp"]
@@ -221,7 +221,7 @@ BYTEDCLI_NO_AUTO_UPGRADE = "1"
 
 [[servers]]
 name = "mcphub-search"
-agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://mcphub.inner.yanick.site/mcp/search"
 profiles = ["base"]
@@ -232,7 +232,7 @@ Authorization = "Bearer ${MCPHUB_TOKEN}"
 
 [[servers]]
 name = "mcphub-notes"
-agents = ["codex", "claude", "trae", "opencode", "aiden"]
+agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://mcphub.vnet.yanick.site/mcp/notes"
 profiles = ["base"]
@@ -244,7 +244,7 @@ Authorization = "Bearer ${MCPHUB_TOKEN}"
 
 [[servers]]
 name = "mcphub-memos"
-agents = ["codex", "claude", "trae", "opencode", "aiden"]
+agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://mcphub.vnet.yanick.site/mcp/memos"
 profiles = ["base"]
@@ -270,7 +270,7 @@ Authorization = "Bearer ${MCPHUB_TOKEN}"
 # （总耗时翻到 130s+），所以思考模型必须同时把 CUSTOM_TIMEOUT_MS 提到 120s。
 [[servers]]
 name = "luma"
-agents = ["codex", "claude", "trae", "opencode", "aiden"]
+agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "luma-mcp@latest"]
@@ -290,7 +290,7 @@ CUSTOM_TIMEOUT_MS = "120000"
 # npm 包已发布，npx 自动下载；ffmpeg 由 @ffmpeg-installer/ffmpeg 按平台内置，无需本地安装。
 [[servers]]
 name = "agent-vision"
-agents = ["codex", "claude", "trae", "opencode", "aiden"]
+agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "npx"
 args = ["-y", "@yanickxia/agent-vision"]
@@ -327,7 +327,7 @@ AGENT_VISION_MODEL = "doubao-seed-2.0-mini-nothink"
 #   要覆盖 codex/opencode，得先给 agent-mcp-sync 加多 header 支持，而非改这里。
 [[servers]]
 name = "clickup"
-agents = ["claude", "trae", "aiden"]
+agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://mcp.clickup.com/mcp"
 profiles = ["base"]
@@ -364,7 +364,7 @@ x-workspace-id = "908140"
 # 本条目覆盖的是 codex / opencode / trae / aiden 这几家走配置文件的 host。
 [[servers]]
 name = "sessions"
-agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+agents = ["claude-code", "codex", "opencode"]
 type = "stdio"
 command = "sessions"
 args = ["--mcp"]
@@ -374,7 +374,7 @@ tags = ["sessions", "history", "recall", "memory"]
 
 [[servers]]
 name = "ai-proxy"
-agents = ["codex", "claude", "trae", "opencode", "aiden", "pi"]
+agents = ["claude-code", "codex", "opencode"]
 type = "streamable-http"
 url = "https://ai-proxy.inner.yanick.site/mcp"
 bearer_token_env_var = "AI_PROXY_API_KEY"   # codex/opencode 只认这个；需在 agent 环境里 export

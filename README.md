@@ -196,6 +196,8 @@ team = "ark"
 - `[[installs]]`：`source`(必填)、`agents`、`skills`（`["*"]`=全部）、`profiles`(必填非空)、`mode`、`post_install`、`installer`（仅 `skills`）、`env`。
 - `[[servers]]`：`name`(必填)、`type`（`stdio`/`streamable-http`，另兼容 `sse`）、`command`、`args`、`url`、`env`、`headers`、`env_vars`、`bearer_token_env_var`、`profiles`(必填非空)、`startup_timeout_sec`。
 
+**agents**：本仓库统一使用 `["claude-code", "codex", "opencode"]`（`[[installs]]` 与 `[[servers]]` 都是）。MCP 域的 canonical 名是 `claude-code`；历史写法 `claude` 仍作为别名被接受，并在解析期归一化为 `claude-code`（`--agent claude` 与 `--agent claude-code` 等价）。trae / aiden / pi 的 writer 代码仍保留并受支持，但当前配置不再使用（休眠状态）；需要时把对应名字加进条目 `agents` 即可。
+
 `${VAR}` 在解析期统一展开，覆盖范围：`[[servers]]` 的 `args` 元素、`url`、`env` 值、`headers` 值。解析顺序：`~/.config/agent-env/secrets.toml` 的 exact key → lowercase key → 环境变量 → 空串（静默）。
 
 dry-run 脱敏：**来自 secrets.toml 的所有值出现即替换为 `***redacted***`**（无论出现在 CLI 命令还是渲染的 config block）；env 兜底值不脱敏。apply 写入目标文件的是真实值。

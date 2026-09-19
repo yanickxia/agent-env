@@ -31,6 +31,39 @@ const GlobalProfile = "global"
 // IsGlobalProfile reports whether a profile name is the reserved global keyword.
 func IsGlobalProfile(name string) bool { return name == GlobalProfile }
 
+// ClaudeCodeAgent is the canonical name of the Claude Code agent. The MCP
+// domain historically spelled it "claude"; both spellings are accepted and
+// normalized to this canonical value.
+const ClaudeCodeAgent = "claude-code"
+
+// CanonicalAgent maps accepted agent aliases to their canonical name. Today the
+// only alias is "claude" -> "claude-code"; everything else passes through.
+func CanonicalAgent(name string) string {
+	if name == "claude" {
+		return ClaudeCodeAgent
+	}
+	return name
+}
+
+// CanonicalAgents trims, canonicalizes and de-duplicates an agent list,
+// preserving order. Empty entries are dropped.
+func CanonicalAgents(names []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		name = CanonicalAgent(name)
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // EnvVar is one environment variable for the primary installer.
 type EnvVar struct {
 	Key   string

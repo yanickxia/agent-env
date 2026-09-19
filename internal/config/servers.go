@@ -213,7 +213,7 @@ func parseServerEntry(entry map[string]any, manifestPath string, order tableOrde
 		Command:           strings.TrimSpace(command),
 		URL:               expandPlaceholders(strings.TrimSpace(url), resolve),
 		Args:              expandAll(args, resolve),
-		Agents:            trimNonEmpty(agents),
+		Agents:            CanonicalAgents(agents),
 		Profiles:          normalizedProfiles,
 		Global:            global,
 		Env:               expandKV(environ, resolve),
