@@ -12,8 +12,11 @@ func newSkillsCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "skills",
 		Short: "Manage agent skills",
-		Long:  "Manage agent skills declared in the unified config's [[installs]] table.",
-		Args:  cobra.NoArgs,
+		Long: "Manage agent skills declared in the unified config's [[installs]] table.\n\n" +
+			"Repo selection is discovered from the current directory up to /: every\n" +
+			".agent-env.toml found is merged (nearest first). AGENT_ENV_REPO_CONFIG (or\n" +
+			"the legacy AGENT_SKILLS_REPO_CONFIG) pins a single file instead of walking.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
@@ -61,6 +64,7 @@ func resolveOptions() skills.Options {
 		StatePath:      config.StatePath(getenv, home),
 		RepoConfigPath: config.RepoConfigPath(getenv, root),
 		ProjectRoot:    root,
+		StartDir:       wd,
 		Home:           home,
 		Stdout:         os.Stdout,
 		Stderr:         os.Stderr,

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -16,8 +17,11 @@ type RepoConfig struct {
 	Path     string
 	Profiles []string
 	Agents   []string
-	Mode     string
-	Vars     map[string]any
+	// AgentsDeclared reports whether the agents key was present (so an explicit
+	// empty array still counts as "declared" during layered merging).
+	AgentsDeclared bool
+	Mode           string
+	Vars           map[string]any
 }
 
 // LoadRepoConfig reads and validates path. found=false means the file is
@@ -61,6 +65,7 @@ func LoadRepoConfigWithHint(path, unknownKeyHint string) (cfg *RepoConfig, found
 	if err != nil {
 		return nil, false, err
 	}
+	_, agentsPresent := raw["agents"]
 	agents, err := normalizeStringList(raw["agents"], "agents", path)
 	if err != nil {
 		return nil, false, err
@@ -100,11 +105,12 @@ func LoadRepoConfigWithHint(path, unknownKeyHint string) (cfg *RepoConfig, found
 	}
 
 	return &RepoConfig{
-		Path:     path,
-		Profiles: profiles,
-		Agents:   agents,
-		Mode:     mode,
-		Vars:     vars,
+		Path:           path,
+		Profiles:       profiles,
+		Agents:         agents,
+		AgentsDeclared: agentsPresent,
+		Mode:           mode,
+		Vars:           vars,
 	}, true, nil
 }
 
@@ -143,4 +149,133 @@ func normalizeStringList(value any, field, path string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// DefaultRepoConfigPath is the conventional single-repo path. When an explicit
+// override equals this path it is treated as "no override" so layered discovery
+// can still run (the file itself is discovered as the repo-root layer).
+func DefaultRepoConfigPath(projectRoot string) string {
+	return filepath.Join(projectRoot, ".agent-env.toml")
+}
+
+// RepoConfigOverride returns the explicit repo config path from the canonical
+// env var or the legacy alias, or "" when neither is set.
+func RepoConfigOverride(getenv GetenvFunc) string {
+	if v := getenv("AGENT_ENV_REPO_CONFIG"); v != "" {
+		return v
+	}
+	if v := getenv("AGENT_SKILLS_REPO_CONFIG"); v != "" {
+		return v
+	}
+	return ""
+}
+
+// ancestorDirs returns start's absolute path and every ancestor up to the
+// filesystem root, nearest first.
+func ancestorDirs(start string) []string {
+	abs, err := filepath.Abs(start)
+	if err != nil {
+		abs = filepath.Clean(start)
+	}
+	dirs := []string{}
+	for {
+		dirs = append(dirs, abs)
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			break
+		}
+		abs = parent
+	}
+	return dirs
+}
+
+// WalkRepoConfigs collects and validates .agent-env.toml from startDir up to
+// "/", nearest first. An invalid file fails the walk with its full path.
+func WalkRepoConfigs(startDir, hint string) ([]*RepoConfig, []string, error) {
+	configs := []*RepoConfig{}
+	paths := []string{}
+	for _, dir := range ancestorDirs(startDir) {
+		path := filepath.Join(dir, ".agent-env.toml")
+		fi, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, nil, fmt.Errorf("%s: cannot read repo config %s: %v", Prog, path, err)
+		}
+		if fi.IsDir() {
+			continue
+		}
+		cfg, found, err := LoadRepoConfigWithHint(path, hint)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !found {
+			continue
+		}
+		configs = append(configs, cfg)
+		paths = append(paths, path)
+	}
+	return configs, paths, nil
+}
+
+// MergeRepoConfigs overlays layers nearest-first: profiles are unioned with
+// nearest priority, agents/mode use the nearest declaring layer, and vars are
+// merged per key with nearest override.
+func MergeRepoConfigs(configs []*RepoConfig) *RepoConfig {
+	merged := &RepoConfig{Vars: map[string]any{}}
+	seenProfiles := map[string]bool{}
+	for _, cfg := range configs {
+		for _, p := range cfg.Profiles {
+			if !seenProfiles[p] {
+				seenProfiles[p] = true
+				merged.Profiles = append(merged.Profiles, p)
+			}
+		}
+		if !merged.AgentsDeclared && cfg.AgentsDeclared {
+			merged.Agents = append([]string{}, cfg.Agents...)
+			merged.AgentsDeclared = true
+		}
+		if merged.Mode == "" && cfg.Mode != "" {
+			merged.Mode = cfg.Mode
+		}
+		for k, v := range cfg.Vars {
+			if _, ok := merged.Vars[k]; !ok {
+				merged.Vars[k] = v
+			}
+		}
+	}
+	return merged
+}
+
+// LoadRepoSelection resolves the effective repo selection. An explicit path
+// (from Options, AGENT_ENV_REPO_CONFIG or AGENT_SKILLS_REPO_CONFIG) forces
+// single-file mode; otherwise .agent-env.toml files are discovered from
+// startDir up to "/" and merged. It returns the merged config, the discovered
+// layer paths (nearest first), and found=false when no layer exists.
+func LoadRepoSelection(explicit, startDir string, getenv GetenvFunc, hint string) (*RepoConfig, []string, bool, error) {
+	if explicit == "" {
+		explicit = RepoConfigOverride(getenv)
+	}
+	if explicit != "" {
+		cfg, found, err := LoadRepoConfigWithHint(explicit, hint)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if !found {
+			return nil, []string{}, false, nil
+		}
+		return cfg, []string{explicit}, true, nil
+	}
+	if startDir == "" {
+		startDir = "."
+	}
+	configs, paths, err := WalkRepoConfigs(startDir, hint)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if len(configs) == 0 {
+		return nil, []string{}, false, nil
+	}
+	return MergeRepoConfigs(configs), paths, true, nil
 }

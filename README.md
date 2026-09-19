@@ -172,6 +172,31 @@ team = "ark"
 
 只读命令与 apply 都接受：`--profile` 覆盖 repo 配置（临时，不写回）。缺少文件 = 无选择，不报错；文件非法（缺 profiles、非 kebab、含 `global`、未知 key）→ rc=1。
 
+## 层级配置（mise 式发现）
+
+`agent-env` 从**当前目录**逐级向上走到 `/`，收集沿途所有 `.agent-env.toml` 并合并（就近优先）。这样可把共享选择放在父目录，子 repo 免重复声明：
+
+```text
+~/codes/bytedance/.agent-env.toml                  # profiles = ["ark-mlops"]（团队公共）
+~/codes/bytedance/aml/model-proxy/                  # 子 repo 自动继承，无需重复声明
+~/codes/bytedance/aml/model-proxy/.agent-env.toml   # 可选：profiles = ["base"]（子层追加）
+```
+
+- 发现范围自然包含 `$HOME` 级与 git repo root 级；某层文件存在但解析/校验非法 → 报错退出，消息带该文件完整路径。
+- `AGENT_ENV_REPO_CONFIG`（或兼容别名 `AGENT_SKILLS_REPO_CONFIG`）设置时 = **单文件模式**，不向上查找（既有用法完全兼容）。
+- 安装目标与 stamp 的 `repo_root` key 仍锚定 **git toplevel**（fallback cwd）——不会把 project 配置写到父目录。
+
+合并规则（多层叠加，就近最深优先）：
+
+| 字段 | 规则 |
+|---|---|
+| `profiles` | **并集**，就近优先去重保序（父层给公共选择，子层追加特有） |
+| `agents` | **就近声明胜出**；都没声明 → 空（用条目自身 agents） |
+| `mode` | 就近声明胜出 |
+| `vars` | 按 key 合并，就近覆盖 |
+
+有效 profiles（去重排序后）进 stamp 签名：父层配置变化会触发一次重装，属预期。`resolve`/`status` 会先列出发现的配置层（就近在前）与合并后的 profiles/agents；`init` 仍只写/合并 git toplevel（fallback cwd）那一层文件，不跨层合并。
+
 ## Profile 语义
 
 `profiles` 是每个 manifest 条目的必填字段，保留关键字 `global` 决定层级：

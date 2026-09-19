@@ -32,6 +32,7 @@ type Options struct {
 	StatePath      string
 	RepoConfigPath string
 	ProjectRoot    string
+	StartDir       string
 	Home           string
 	Stdout         io.Writer
 	Stderr         io.Writer
@@ -63,6 +64,7 @@ type runner struct {
 	repo          *config.RepoConfig
 	repoMissing   bool
 	repoLoaded    bool
+	repoLayers    []string
 	effectiveProf string
 	effectiveList []string
 
@@ -163,21 +165,31 @@ func appendUnique(list []string, item string) []string {
 	return append(list, item)
 }
 
-// loadRepo reads the repo config once per project-aware command.
+// loadRepo resolves the repo selection once per project-aware command. An
+// explicit RepoConfigPath (or AGENT_ENV_REPO_CONFIG) is single-file mode;
+// otherwise .agent-env.toml files are discovered from StartDir up to "/" and
+// merged (nearest first).
 func (r *runner) loadRepo() error {
 	if r.repoLoaded {
 		return nil
 	}
 	r.repoLoaded = true
 
-	path := r.opts.RepoConfigPath
-	if path == "" {
-		path = config.RepoConfigPath(os.Getenv, r.opts.ProjectRoot)
+	start := r.opts.StartDir
+	if start == "" {
+		start = r.opts.ProjectRoot
 	}
-	cfg, found, err := config.LoadRepoConfig(path)
+	explicit := r.opts.RepoConfigPath
+	if explicit == config.DefaultRepoConfigPath(r.opts.ProjectRoot) {
+		explicit = ""
+	}
+	cfg, layers, found, err := config.LoadRepoSelection(
+		explicit, start, os.Getenv,
+		"install details and hooks belong in the global manifest")
 	if err != nil {
 		return err
 	}
+	r.repoLayers = layers
 	if !found {
 		r.repoMissing = true
 		return nil

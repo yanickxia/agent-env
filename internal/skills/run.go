@@ -87,9 +87,13 @@ func (r *runner) cmdResolve() error {
 
 func (r *runner) resolveStatusGating() error {
 	if r.repoMissing && len(r.f.Profiles) == 0 {
-		return fmt.Errorf("%s: resolve/status need a repo config or --profile; no .agent-env.toml in %s\n"+
+		start := r.opts.StartDir
+		if start == "" {
+			start = r.opts.ProjectRoot
+		}
+		return fmt.Errorf("%s: resolve/status need a repo config or --profile; no .agent-env.toml found from %s up to /\n"+
 			"  initialize one with: agent-env init <profile>... [--agent AGENT]... [--apply]",
-			config.Prog, r.opts.ProjectRoot)
+			config.Prog, start)
 	}
 	if r.f.SkillSeen {
 		return fmt.Errorf("%s: --skill/--skills filters are supported for apply and dry-run, not resolve/status", config.Prog)
@@ -239,8 +243,12 @@ func (r *runner) processManifest(mode string) error {
 	}
 
 	if repoLevelSkips > 0 {
-		fmt.Fprintf(r.errw, "%s: no .agent-env.toml in %s and no --profile given; skipped %d repo-level entries (use agent-env init or --profile)\n",
-			config.Prog, projectRoot, repoLevelSkips)
+		start := r.opts.StartDir
+		if start == "" {
+			start = r.opts.ProjectRoot
+		}
+		fmt.Fprintf(r.errw, "%s: no .agent-env.toml found from %s up to / and no --profile given; skipped %d repo-level entries (use agent-env init or --profile)\n",
+			config.Prog, start, repoLevelSkips)
 	}
 	if entryCount == 0 {
 		return fmt.Errorf("%s: no active entries found in %s", config.Prog, r.opts.ManifestPath)
@@ -280,6 +288,14 @@ func (r *runner) resolveManifest(mode string) error {
 		fmt.Fprintf(r.out, "agents: %s\n", strings.Join(r.repo.Agents, ","))
 	} else {
 		fmt.Fprintln(r.out, "agents: (manifest defaults)")
+	}
+	fmt.Fprintln(r.out, "layers:")
+	if len(r.repoLayers) == 0 {
+		fmt.Fprintln(r.out, "  (none)")
+	} else {
+		for _, p := range r.repoLayers {
+			fmt.Fprintf(r.out, "  %s\n", p)
+		}
 	}
 	fmt.Fprintln(r.out)
 	fmt.Fprintln(r.out, "skills:")

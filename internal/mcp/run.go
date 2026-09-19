@@ -68,6 +68,7 @@ type runner struct {
 
 	servers       []config.Server
 	repo          *config.RepoConfig
+	repoLayers    []string
 	effectiveProf string
 	effectiveList []string
 }
@@ -91,7 +92,9 @@ func Run(opts Options, f Filters) error {
 		opts.LookupEnv = os.Getenv
 	}
 	if opts.WorkDir == "" {
-		if wd, err := os.Getwd(); err == nil {
+		if opts.ProjectRoot != "" {
+			opts.WorkDir = opts.ProjectRoot
+		} else if wd, err := os.Getwd(); err == nil {
 			opts.WorkDir = wd
 		}
 	}
@@ -226,15 +229,25 @@ func (r *runner) loadServers() error {
 	return nil
 }
 
+// loadRepo resolves the repo selection once. An explicit RepoConfigPath (or
+// AGENT_ENV_REPO_CONFIG) is single-file mode; otherwise .agent-env.toml files
+// are discovered from the working directory up to "/" and merged.
 func (r *runner) loadRepo() error {
-	path := r.opts.RepoConfigPath
-	if path == "" {
-		path = config.RepoConfigPath(r.getenv, r.opts.ProjectRoot)
+	start := r.opts.WorkDir
+	if start == "" {
+		start = r.opts.ProjectRoot
 	}
-	cfg, found, err := config.LoadRepoConfigWithHint(path, "server definitions belong in the global manifest")
+	explicit := r.opts.RepoConfigPath
+	if explicit == config.DefaultRepoConfigPath(r.opts.ProjectRoot) {
+		explicit = ""
+	}
+	cfg, layers, found, err := config.LoadRepoSelection(
+		explicit, start, r.getenv,
+		"server definitions belong in the global manifest")
 	if err != nil {
 		return err
 	}
+	r.repoLayers = layers
 	if found {
 		r.repo = cfg
 	}
@@ -524,8 +537,12 @@ func (r *runner) processManifest(mode string) error {
 	}
 
 	if repoLevelSkips > 0 {
-		fmt.Fprintf(r.errw, "%s: no .agent-env.toml in %s and no --profile given; skipped %d repo-level servers (use agent-env init or --profile)\n",
-			config.Prog, projectRoot, repoLevelSkips)
+		start := r.opts.WorkDir
+		if start == "" {
+			start = projectRoot
+		}
+		fmt.Fprintf(r.errw, "%s: no .agent-env.toml found from %s up to / and no --profile given; skipped %d repo-level servers (use agent-env init or --profile)\n",
+			config.Prog, start, repoLevelSkips)
 	}
 
 	traeProjectPath := filepath.Join(projectRoot, ".trae", "traecli.yaml")

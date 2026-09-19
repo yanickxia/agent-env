@@ -54,8 +54,11 @@ func newMCPCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "mcp",
 		Short: "Manage MCP servers",
-		Long:  "Manage MCP servers declared in the unified config's [[servers]] table.",
-		Args:  cobra.NoArgs,
+		Long: "Manage MCP servers declared in the unified config's [[servers]] table.\n\n" +
+			"Repo selection is discovered from the current directory up to /: every\n" +
+			".agent-env.toml found is merged (nearest first). AGENT_ENV_REPO_CONFIG (or\n" +
+			"the legacy AGENT_SKILLS_REPO_CONFIG) pins a single file instead of walking.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
