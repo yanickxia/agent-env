@@ -15,7 +15,7 @@ func (r *runner) anyFilterSeen() bool {
 }
 
 func (r *runner) cmdList() error {
-	if r.anyFilterSeen() {
+	if r.anyFilterSeen() || r.opts.Force {
 		return fmt.Errorf("%s: filters are supported for apply and dry-run, not list", config.Prog)
 	}
 	data, err := os.ReadFile(r.opts.ManifestPath)
@@ -30,7 +30,7 @@ func (r *runner) cmdList() error {
 }
 
 func (r *runner) cmdProfiles() error {
-	if r.anyFilterSeen() {
+	if r.anyFilterSeen() || r.opts.Force {
 		return fmt.Errorf("%s: filters are supported for apply and dry-run, not profiles", config.Prog)
 	}
 	entries, err := config.ParseManifest(r.opts.ManifestPath)
@@ -60,7 +60,9 @@ func (r *runner) cmdApply() error {
 	if r.f.NoRepo && r.f.ProfileSeen {
 		return fmt.Errorf("%s: --no-repo cannot be combined with --profile/--profiles; --no-repo only installs global entries, drop --profile", config.Prog)
 	}
-	if r.f.SkipUnchanged && (r.f.AgentSeen || r.f.SkillSeen) {
+	// --force overrides --skip-unchanged, so the combination is legal (force wins)
+	// and also makes the --skip-unchanged + --agent/--skill restriction moot.
+	if r.f.SkipUnchanged && !r.opts.Force && (r.f.AgentSeen || r.f.SkillSeen) {
 		return fmt.Errorf("%s: --skip-unchanged cannot be combined with --agent/--skill/--skills; stamps are only read/written by complete runs", config.Prog)
 	}
 	// Interactive selection is deliberately not ported, so fail clearly instead
@@ -106,6 +108,9 @@ func (r *runner) resolveStatusGating() error {
 	}
 	if r.f.SkipUnchanged {
 		return fmt.Errorf("%s: --skip-unchanged is an apply flag; status reads stamps without it", config.Prog)
+	}
+	if r.opts.Force {
+		return fmt.Errorf("%s: --force is an apply flag; it is not supported by resolve/status", config.Prog)
 	}
 	return nil
 }
@@ -181,18 +186,22 @@ func (r *runner) processManifest(mode string) error {
 		// on every apply (not just under --skip-unchanged): a matching stamp
 		// means the global install is already in sync and npx is not re-run.
 		// Repo-level "project" stamps stay opt-in via --skip-unchanged.
+		// --force skips the stamp lookup entirely (reinstall), but the signature
+		// is still computed so a normal apply can write it back afterwards.
 		entrySig := ""
-		if r.f.SkipUnchanged || entry.Global {
+		if r.f.SkipUnchanged || entry.Global || r.opts.Force {
 			if entry.Global {
 				entrySig = stamp.Signature(source, agentsRaw, skillsRaw, entry.Mode, signatureScope, entry.Installer, entry.EnvRaw, "", "")
 			} else {
 				entrySig = stamp.Signature(source, selectedAgents, skillsRaw, entry.Mode, signatureScope, entry.Installer, entry.EnvRaw, r.effectiveProf, projectRoot)
 			}
-			if value, found := store.Lookup(source, stampScope); found && value == entrySig {
-				fmt.Fprintf(r.out, "# skip (unchanged): %s [%s]\n", source, stampScope)
-				r.runPostInstall(mode, source, entry.PostInstall)
-				processedCount++
-				continue
+			if (r.f.SkipUnchanged || entry.Global) && !r.opts.Force {
+				if value, found := store.Lookup(source, stampScope); found && value == entrySig {
+					fmt.Fprintf(r.out, "# skip (unchanged): %s [%s]\n", source, stampScope)
+					r.runPostInstall(mode, source, entry.PostInstall)
+					processedCount++
+					continue
+				}
 			}
 		}
 

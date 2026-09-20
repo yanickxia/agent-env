@@ -34,6 +34,7 @@ type Options struct {
 	ProjectRoot    string
 	StartDir       string
 	Home           string
+	Force          bool
 	Stdout         io.Writer
 	Stderr         io.Writer
 }

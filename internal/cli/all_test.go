@@ -379,3 +379,10 @@ func TestAllInOneRejectsNoRepoWithProfile(t *testing.T) {
 		t.Fatalf("want no-repo/profile combination error, got %v", err)
 	}
 }
+
+func TestAllInOneHasForceFlag(t *testing.T) {
+	cmd := newAllCmd("apply", "test")
+	if cmd.Flags().Lookup("force") == nil {
+		t.Fatal("all-in-one apply must expose --force")
+	}
+}

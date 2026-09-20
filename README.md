@@ -126,7 +126,7 @@ agent-env init PROFILE... [--name N]... [--agent A]... [--apply] [--dry-run]
 顶层 `apply` / `dry-run` 只接受两域**共享**的 flags：
 
 ```sh
-agent-env apply    [--agent A]... [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--no-repo]
+agent-env apply    [--agent A]... [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--force] [--no-repo]
 agent-env dry-run  [同上 flags]
 ```
 
@@ -140,7 +140,7 @@ agent-env dry-run  [同上 flags]
 ### skills
 
 ```sh
-agent-env skills apply    [--agent A]... [--skill S]... [--skills a,b] [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--no-repo]
+agent-env skills apply    [--agent A]... [--skill S]... [--skills a,b] [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--force] [--no-repo]
 agent-env skills dry-run  [同上 flags]
 agent-env skills list                     # 打印 config.toml 原文
 agent-env skills profiles                 # 列出可声明的 profiles（排序去重，排除保留字 global；无则 rc=1）
@@ -152,7 +152,8 @@ agent-env skills status   [--agent A]... [--profile P]...    # 只读：repo 级
 - repo 级条目必须显式提供选择：没有 `.agent-env.toml` 也没有 `--profile` 时跳过并提示；有选择时按 `条目 profiles ∩ 选择 ≠ ∅` 门禁。
 - 全局条目的 `[user]` stamp 在**每次** apply/dry-run 都参与判定：匹配即跳过（打印 `# skip (unchanged): ... [user]`），未过滤的完整 apply 安装成功后写入，因此裸 `agent-env apply` 不会重跑已同步的全局条目。`--skip-unchanged` 现在只额外控制 **repo 级条目**的 `project` stamp（传了才读写），且只用于完整运行（与 `--agent`/`--skill` 组合报错；dry-run 永不写 stamp）。被 `--agent`/`--skill`/`--skills` 收窄的运行仍用全局 stamp 判定跳过，但安装后不写 stamp（签名描述声明的形状，而非收窄后的实际安装集）。
 - `--no-repo` 只用于 apply/dry-run：跳过 repo 发现、只装全局条目、静默排除 repo 级条目，且与 `--profile` 互斥；`list`/`profiles`/`resolve`/`status` 拒绝该 flag。chezmoi 91 钩子从 `$HOME` 运行、没有 repo 上下文，可用它显式声明这一点。
-- 只读命令 `resolve`/`status` 需要 repo 配置或 `--profile`，且拒绝 `--skill`/`--skills`、`--skip-unchanged`；`profiles`/`list` 拒绝一切过滤器。
+- **`--force` 中断恢复**：强制重装所有活跃条目，忽略 stamp 判定——用于“安装中途退出导致 store 与 stamp 不一致”的自愈（例如 store 缺文件但 state.tsv 仍标记已装）。`--force` 优先于 `--skip-unchanged`（同传时 force 生效，不报错），可与 `--skill`/`--agent` 组合只重装子集；重装成功后写回 stamp，之后普通 apply 恢复 skip。MCP 无 stamp、天然幂等，`--force` 对其为 no-op。
+- 只读命令 `resolve`/`status` 需要 repo 配置或 `--profile`，且拒绝 `--skill`/`--skills`、`--skip-unchanged`、`--force`；`profiles`/`list` 拒绝一切过滤器。
 - `list` 只读 `[[installs]]`，忽略 `[[servers]]`。
 
 #### 分发机制（npx skills）

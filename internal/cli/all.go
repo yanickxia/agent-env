@@ -22,6 +22,7 @@ type allFlags struct {
 	noInter2 bool
 	skipUnch bool
 	noRepo   bool
+	force    bool
 }
 
 func addAllFlags(cmd *cobra.Command, f *allFlags) {
@@ -33,6 +34,7 @@ func addAllFlags(cmd *cobra.Command, f *allFlags) {
 	fl.BoolVarP(&f.yes, "yes", "y", false, "alias for --non-interactive")
 	fl.BoolVar(&f.noInter2, "no-interactive", false, "alias for --non-interactive")
 	fl.BoolVar(&f.skipUnch, "skip-unchanged", false, "skills only: skip entries whose stamp matches the last apply (MCP ignores this)")
+	fl.BoolVar(&f.force, "force", false, "skills only: reinstall active entries even when the stamp matches (repairs interrupted installs); overrides --skip-unchanged, ignored by MCP")
 	fl.BoolVar(&f.noRepo, "no-repo", false, "no repo context: skip .agent-env.toml discovery and install global entries only (mutually exclusive with --profile)")
 }
 
@@ -47,6 +49,7 @@ type sharedFilters struct {
 	nonInteractive bool
 	skipUnchanged  bool
 	noRepo         bool
+	force          bool
 }
 
 func (f *allFlags) toShared(cmd *cobra.Command, command string) sharedFilters {
@@ -59,6 +62,7 @@ func (f *allFlags) toShared(cmd *cobra.Command, command string) sharedFilters {
 		nonInteractive: f.noInter || f.yes || f.noInter2,
 		skipUnchanged:  f.skipUnch,
 		noRepo:         f.noRepo,
+		force:          f.force,
 	}
 }
 
@@ -69,6 +73,8 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 	if out == nil {
 		out = os.Stdout
 	}
+
+	sOpts.Force = sf.force
 
 	fmt.Fprintln(out, "=== skills ===")
 	skillsErr = skills.Run(sOpts, skills.Filters{
