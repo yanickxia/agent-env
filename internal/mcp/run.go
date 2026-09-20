@@ -75,7 +75,7 @@ type runner struct {
 }
 
 func errUnsupportedUserAgent(agent string) error {
-	return fmt.Errorf("%s: no user-level writer for agent '%s' (expected codex, trae, opencode)", config.Prog, agent)
+	return fmt.Errorf("%s: no user-level writer for agent '%s' (expected codex, trae, opencode, pi, omp)", config.Prog, agent)
 }
 
 // Run executes one mcp command.
@@ -370,7 +370,7 @@ func (r *runner) cmdUpsertStdin() error {
 	}
 	agent := r.f.Agents[0]
 	switch agent {
-	case "codex", "trae", "trae-cn", "opencode":
+	case "codex", "trae", "trae-cn", "opencode", "pi", "omp":
 	default:
 		return errUnsupportedUserAgent(agent)
 	}
@@ -452,9 +452,13 @@ type collected struct {
 	traeProject     []config.Server
 	codexProject    []config.Server
 	opencodeProject []config.Server
+	piProject       []config.Server
+	ompProject      []config.Server
 	traeUser        []config.Server
 	codexUser       []config.Server
 	opencodeUser    []config.Server
+	piUser          []config.Server
+	ompUser         []config.Server
 	claudeUser      []config.Server
 }
 
@@ -472,7 +476,9 @@ func (r *runner) processManifest(mode string) error {
 	var c collected
 	seen := map[string]map[string]bool{
 		"trae-project": {}, "codex-project": {}, "opencode-project": {},
-		"trae-user": {}, "codex-user": {}, "opencode-user": {}, "claude-user": {},
+		"pi-project": {}, "omp-project": {},
+		"trae-user": {}, "codex-user": {}, "opencode-user": {},
+		"pi-user": {}, "omp-user": {}, "claude-user": {},
 	}
 
 	repoLevelSkips := 0
@@ -527,6 +533,18 @@ func (r *runner) processManifest(mode string) error {
 				} else {
 					c.opencodeProject = addByName(c.opencodeProject, seen["opencode-project"], row)
 				}
+			case "pi":
+				if row.Global {
+					c.piUser = addByName(c.piUser, seen["pi-user"], row)
+				} else {
+					c.piProject = addByName(c.piProject, seen["pi-project"], row)
+				}
+			case "omp":
+				if row.Global {
+					c.ompUser = addByName(c.ompUser, seen["omp-user"], row)
+				} else {
+					c.ompProject = addByName(c.ompProject, seen["omp-project"], row)
+				}
 			case "aiden":
 				if err := r.handleAiden(mode, row); err != nil {
 					return err
@@ -558,6 +576,8 @@ func (r *runner) processManifest(mode string) error {
 	traeProjectPath := filepath.Join(projectRoot, ".trae", "traecli.yaml")
 	codexProjectPath := filepath.Join(projectRoot, ".codex", "config.toml")
 	opencodeProjectPath := filepath.Join(projectRoot, ".opencode", "opencode.jsonc")
+	piProjectPath := filepath.Join(projectRoot, ".pi", "mcp.json")
+	ompProjectPath := filepath.Join(projectRoot, ".omp", "mcp.json")
 
 	if len(c.traeProject) > 0 {
 		rendered := renderTrae(c.traeProject)
@@ -583,6 +603,16 @@ func (r *runner) processManifest(mode string) error {
 			fmt.Fprintf(r.out, "# %s: would write OpenCode project MCP config: %s\n", config.Prog, opencodeProjectPath)
 			r.printBlock(rendered)
 		} else if err := writeOpencodeProjectBlock(opencodeProjectPath, rendered); err != nil {
+			return err
+		}
+	}
+	if len(c.piProject) > 0 {
+		if err := r.writeMCPJSONTarget(mode, "pi", piProjectPath, "Pi project", c.piProject); err != nil {
+			return err
+		}
+	}
+	if len(c.ompProject) > 0 {
+		if err := r.writeMCPJSONTarget(mode, "omp", ompProjectPath, "OMP project", c.ompProject); err != nil {
 			return err
 		}
 	}
@@ -617,6 +647,16 @@ func (r *runner) processManifest(mode string) error {
 		fmt.Fprintf(r.out, "# %s: would write Claude user MCP config: %s\n", config.Prog, r.opts.ClaudeJSON)
 		r.printBlock(rendered)
 	} else if err := r.patchClaude(rendered); err != nil {
+		return err
+	}
+
+	// pi/omp user targets are whole-file mcpServers writers: like claude they
+	// run even with an empty set so a stale mcpServers gets cleaned up, but a
+	// missing target is not created when there is nothing to write.
+	if err := r.writeMCPJSONTarget(mode, "pi", filepath.Join(r.opts.Home, ".pi", "agent", "mcp.json"), userTargetLabel("pi"), c.piUser); err != nil {
+		return err
+	}
+	if err := r.writeMCPJSONTarget(mode, "omp", filepath.Join(r.opts.Home, ".omp", "agent", "mcp.json"), userTargetLabel("omp"), c.ompUser); err != nil {
 		return err
 	}
 
@@ -679,6 +719,8 @@ func (r *runner) renderUserBlock(agent string, entries []config.Server) (string,
 		return renderTrae(entries), nil
 	case "opencode":
 		return renderOpencode(entries), nil
+	case "pi", "omp":
+		return renderPiOMP(entries, r.resolveSecret, func(m string) { fmt.Fprintln(r.errw, m) }, agent)
 	default:
 		return "", errUnsupportedUserAgent(agent)
 	}
@@ -733,6 +775,39 @@ func (r *runner) writeUserTarget(mode, agent, target string, entries []config.Se
 	return nil
 }
 
+// writeMCPJSONTarget writes a pi/omp mcp.json by replacing the top-level
+// "mcpServers" member, preserving any other top-level members. It runs even
+// with an empty set (so a stale mcpServers gets cleaned up), but a missing
+// target is not created when there is nothing to write. label names the
+// target in dry-run output.
+func (r *runner) writeMCPJSONTarget(mode, agent, target, label string, entries []config.Server) error {
+	existed := false
+	if fi, err := os.Stat(target); err == nil && !fi.IsDir() {
+		existed = true
+	}
+	if !existed && len(entries) == 0 {
+		return nil
+	}
+	rendered, err := r.renderUserBlock(agent, entries)
+	if err != nil {
+		return err
+	}
+
+	if mode == CmdDryRun {
+		transformed := string(patchMCPJSON([]byte(readFileOrEmpty(target)), rendered))
+		fmt.Fprintf(r.out, "# %s: would write %s MCP config: %s\n", config.Prog, label, target)
+		r.printBlock(transformed)
+		return nil
+	}
+
+	raw := []byte(readFileOrEmpty(target))
+	out := patchMCPJSON(raw, rendered)
+	if err := writePreservingMode(target, out, 0o600); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (r *runner) patchClaude(rendered string) error {
 	target := r.opts.ClaudeJSON
 	if target == "" {
@@ -767,6 +842,10 @@ func userTargetLabel(agent string) string {
 		return "Trae user"
 	case "opencode":
 		return "OpenCode user"
+	case "pi":
+		return "Pi user"
+	case "omp":
+		return "OMP user"
 	default:
 		return agent + " user"
 	}

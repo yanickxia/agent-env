@@ -177,6 +177,8 @@ func agentUserTransform(content, agent, block string) (string, error) {
 		return markerUpsert(content, traeBegin, traeEnd, block, ""), nil
 	case "opencode":
 		return opencodeUserTransform(content, block), nil
+	case "pi", "omp":
+		return string(patchMCPJSON([]byte(content), block)), nil
 	default:
 		return "", errUnsupportedUserAgent(agent)
 	}

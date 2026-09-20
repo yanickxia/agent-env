@@ -281,7 +281,7 @@ bearer_token_env_var = "BT"
 	assertContains(t, out, `aiden mcp add --transport http -s global aidh https://x/mcp -H Authorization:\ Bearer\ \*\*\*redacted\*\*\*`)
 }
 
-func TestUnsupportedAgentWarns(t *testing.T) {
+func TestPiUserApplyWritesMCPJSON(t *testing.T) {
 	f := newFixture(t)
 	f.writeSecrets("")
 	f.writeManifest(`
@@ -290,13 +290,46 @@ name = "piserver"
 agents = ["pi"]
 type = "stdio"
 command = "npx"
+args = ["-y", "pi@latest"]
+profiles = ["global"]
+`)
+	_, errb, err := f.run(Filters{Command: CmdApply, NonInteractive: true})
+	if err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	assertNotContains(t, errb, "unsupported agent 'pi'")
+
+	target := filepath.Join(f.home, ".pi", "agent", "mcp.json")
+	var after map[string]any
+	if err := json.Unmarshal([]byte(readFile(t, target)), &after); err != nil {
+		t.Fatalf("pi mcp.json is not valid JSON: %v\n%s", err, readFile(t, target))
+	}
+	mcp, _ := after["mcpServers"].(map[string]any)
+	srv, _ := mcp["piserver"].(map[string]any)
+	if srv == nil {
+		t.Fatalf("piserver not written: %#v", after)
+	}
+	if srv["type"] != "stdio" || srv["command"] != "npx" {
+		t.Fatalf("unexpected piserver entry: %#v", srv)
+	}
+}
+
+func TestUnknownAgentStillWarns(t *testing.T) {
+	f := newFixture(t)
+	f.writeSecrets("")
+	f.writeManifest(`
+[[servers]]
+name = "unknownserver"
+agents = ["bogusagent"]
+type = "stdio"
+command = "npx"
 profiles = ["global"]
 `)
 	_, errb, err := f.run(Filters{Command: CmdDryRun, NonInteractive: true})
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
-	assertContains(t, errb, "unsupported agent 'pi' for server 'piserver'; skipped")
+	assertContains(t, errb, "unsupported agent 'bogusagent' for server 'unknownserver'; skipped")
 }
 
 func TestNoActiveEntriesIsSuccess(t *testing.T) {

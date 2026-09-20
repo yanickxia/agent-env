@@ -12,6 +12,12 @@ import (
 // renderClaudeUser renders the ~/.claude.json top-level mcpServers object from
 // the user-scope claude servers, sorted by name, matching the zsh renderer.
 func renderClaudeUser(entries []config.Server, resolve config.SecretResolver, warn func(string)) (string, error) {
+	return renderClaudeCompat(entries, resolve, warn, "claude")
+}
+
+// renderClaudeCompat renders a Claude-compatible mcpServers object (the format
+// shared by claude, pi and omp). label only affects diagnostics.
+func renderClaudeCompat(entries []config.Server, resolve config.SecretResolver, warn func(string), label string) (string, error) {
 	seen := map[string]bool{}
 	names := []string{}
 	byName := map[string]config.Server{}
@@ -29,20 +35,14 @@ func renderClaudeUser(entries []config.Server, resolve config.SecretResolver, wa
 	result := newObj()
 	for _, name := range names {
 		e := byName[name]
-		t := strings.TrimSpace(e.Type)
-		if t == "" {
-			t = "stdio"
-		}
-		if t == "streamable-http" {
-			t = "http"
-		}
+		t := normalizeType(e.Type)
 
 		obj := newObj()
 		switch t {
 		case "stdio":
 			cmd := strings.TrimSpace(e.Command)
 			if cmd == "" {
-				return "", fmt.Errorf("%s: claude server '%s' requires a command-based MCP entry", config.Prog, name)
+				return "", fmt.Errorf("%s: %s server '%s' requires a command-based MCP entry", config.Prog, label, name)
 			}
 			obj.set("type", "stdio")
 			obj.set("command", cmd)
@@ -59,7 +59,7 @@ func renderClaudeUser(entries []config.Server, resolve config.SecretResolver, wa
 		case "http", "sse":
 			url := strings.TrimSpace(e.URL)
 			if url == "" {
-				return "", fmt.Errorf("%s: claude server '%s' requires a url for %s transport", config.Prog, name, t)
+				return "", fmt.Errorf("%s: %s server '%s' requires a url for %s transport", config.Prog, label, name, t)
 			}
 			obj.set("type", t)
 			obj.set("url", url)
@@ -80,7 +80,7 @@ func renderClaudeUser(entries []config.Server, resolve config.SecretResolver, wa
 				obj.set("headers", h)
 			}
 		default:
-			return "", fmt.Errorf("%s: unsupported server type '%s' for claude server '%s'", config.Prog, t, name)
+			return "", fmt.Errorf("%s: unsupported server type '%s' for %s server '%s'", config.Prog, t, label, name)
 		}
 		result.set(name, obj)
 	}

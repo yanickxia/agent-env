@@ -153,6 +153,16 @@ agent-env skills status   [--agent A]... [--profile P]...    # 只读：repo 级
 - 只读命令 `resolve`/`status` 需要 repo 配置或 `--profile`，且拒绝 `--skill`/`--skills`、`--skip-unchanged`；`profiles`/`list` 拒绝一切过滤器。
 - `list` 只读 `[[installs]]`，忽略 `[[servers]]`。
 
+#### 分发机制（npx skills）
+
+skills 的实际安装委托给 [vercel-labs/skills](https://github.com/vercel-labs/skills) 的 `npx skills`：agent-env 只按 repo/profile 选出条目、拼出 `npx --yes skills add ...` 命令并保证幂等，不自己实现下载与落盘。`source` 接受 GitHub 简写（`owner/repo`）、完整 URL、GitLab/Azure 等任意 git URL（含 `git@...`）、本地路径，以及直接下载 URL。
+
+- **支持哪些 agent**：`agents` 中的名字原样传给 `npx skills add ... -a <agent>`，可选集合就是 vercel-labs/skills 的 available-agents（80+，含 `claude-code`、`codex`、`opencode`、`trae`、`trae-cn`、`pi` 等；`*` 表示全部）。例外：`aiden` 不走 npx，改由 `aiden skills add` 安装。当前 `config.toml` 实际只声明 `claude-code` / `codex` / `opencode`。
+- **装到哪里**：全局（profiles 含 `global`）追加 `-g`，装进各 agent 的全局 skills 目录（`claude-code` → `~/.claude/skills/`、`codex` → `~/.codex/skills/`、`opencode` → `~/.config/opencode/skills/`、`pi` → `~/.pi/agent/skills/` 等，逐 agent 不同）；repo 级（profiles 不含 `global`）不加 `-g`，在 repo 根目录安装（`claude-code` → `.claude/skills/`，`codex` / `opencode` → `.agents/skills/`）。
+- **什么模式**：默认 symlink——各 agent 目录 symlink 到统一 skills store；`mode = "copy"` 追加 `--copy`，为每个 agent 复制独立副本。
+- **特例**：当 `~/.claude/skills` 本身已 symlink 到统一 skills store 时，运行时跳过 `-a claude-code` 并打印提示（claude 直接读 store）。
+- 仅 skills 域使用的字段：`installer`（当前仅 `skills`）、`post_install` 依赖钩子；`skills = ["*"]` 表示源内全部 skill。
+
 ### mcp
 
 ```sh
@@ -163,12 +173,30 @@ agent-env mcp profiles                    # 列出可声明的 profiles（排除
 agent-env mcp upsert-stdin --agent AGENT  # stdin→stdout：插入/替换该 agent 的全局 marker 块（chezmoi modify_ 专用）
 ```
 
-写入目标（marker 块替换，幂等）：
+写入目标（幂等重新 apply；marker 块替换或整体管理，重复运行结果一致）：
 
-- repo 级（profiles 不含 global）：`<repo>/.codex/config.toml`、`<repo>/.trae/traecli.yaml`、`<repo>/.opencode/opencode.jsonc`；claude/aiden 走 CLI。
-- 全局（profiles 含 global）：`~/.codex/config.toml`、`~/.trae/traecli.yaml`、`~/.config/opencode/opencode.jsonc`；aiden 走 CLI（global）；claude patch `~/.claude.json` 顶层 `mcpServers`，其余运行时键原样保留。
+| `agents` 中的名字 | 全局目标（profiles 含 `global`） | repo 级目标 | 格式 |
+|---|---|---|---|
+| `codex` | `~/.codex/config.toml` | `<repo>/.codex/config.toml` | TOML `[mcp_servers.*]` marker 块 |
+| `claude-code` | patch `~/.claude.json` 顶层 `mcpServers`（其余运行时键原样保留） | `claude mcp add` CLI（repo 级） | JSON |
+| `trae` / `trae-cn` | `~/.trae/traecli.yaml` | `<repo>/.trae/traecli.yaml` | YAML `mcp_servers` marker 块 |
+| `opencode` | `~/.config/opencode/opencode.jsonc` | `<repo>/.opencode/opencode.jsonc` | JSONC `"mcp"` 对象（`local`/`remote`） |
+| `aiden` | `aiden mcp add -s global` CLI | `aiden mcp add -s project` CLI | CLI |
+| `pi` | `~/.pi/agent/mcp.json` | `<repo>/.pi/mcp.json` | JSON `mcpServers` |
+| `omp`（oh-my-pi） | `~/.omp/agent/mcp.json` | `<repo>/.omp/mcp.json` | JSON `mcpServers` |
+
+> MCP 域的 claude 规范名是 `claude-code`（旧写法 `claude` 仍被接受并自动归一）；`trae-cn` 与 `trae` 共用同一份 `traecli.yaml`。
+
 - 全局 codex/trae/opencode 由 chezmoi `modify_` 脚本在 apply 内直接算出最终内容：渲染 base 后 pipe 给 `agent-env mcp upsert-stdin --agent X`（与全局 apply 共享同一渲染核心，字节级一致），chezmoi 自己写文件，无外部 writer、无 drift。
+- `pi` / `omp` 没有 chezmoi `modify_` 模板，全局由 `agent-env mcp apply` 直接写（chezmoi 92 钩子每次 apply 都会跑）：整体管理顶层 `mcpServers` 键，其余顶层键保留；目标文件不存在且无条目时不创建空文件。
 - `list`/`profiles` 只读 `[[servers]]`，忽略 `[[installs]]`。
+
+能力差异：
+
+- `env_vars`（环境变量引用透传）：仅 `codex` / `opencode` 支持；其余（`claude-code` / `trae` / `aiden` / `pi` / `omp`）忽略。
+- `startup_timeout_sec`：`codex` 原样写 `startup_timeout_sec`，`opencode` 转成毫秒 `timeout`；其余忽略。
+- `bearer_token_env_var`：`codex` / `trae` / `opencode` 保留 env 引用（分别写 `bearer_token_env_var`、`Authorization: Bearer ${VAR}`、`Bearer {env:VAR}`）；`claude-code` / `aiden` / `pi` / `omp` 在 apply 时解析为明文。
+- 更新方式：所有 agent 统一为幂等重新 apply（`agent-env mcp apply`），无 watch / 热重载；运行中的 agent 需重启才生效。
 
 ### init
 
