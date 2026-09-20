@@ -126,7 +126,7 @@ agent-env init PROFILE... [--name N]... [--agent A]... [--apply] [--dry-run]
 顶层 `apply` / `dry-run` 只接受两域**共享**的 flags：
 
 ```sh
-agent-env apply    [--agent A]... [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged]
+agent-env apply    [--agent A]... [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--no-repo]
 agent-env dry-run  [同上 flags]
 ```
 
@@ -134,12 +134,13 @@ agent-env dry-run  [同上 flags]
 - `--skip-unchanged` 只传给 skills，MCP 忽略（help 中已说明）。
 - `--skill` / `--name` 等域专属 flag 不在顶层定义，cobra 会将其视为未知 flag 拒绝；需要时用对应的 `skills` / `mcp` 子命令。
 - `apply` 必须带 `--non-interactive`（未提供交互选择）。
+- `--no-repo` 表示**无 repo 上下文**：跳过 `.agent-env.toml` 逐级发现（也不读 `AGENT_ENV_REPO_CONFIG`/显式路径），只装全局条目，静默排除 repo 级条目（不打印跳过提示）；与 `--profile`/`--profiles` 互斥。chezmoi 全局钩子从 `$HOME` 运行时使用它，避免祖先目录意外出现 `.agent-env.toml` 时把 repo 级条目装进全局。
 - 所有过滤器 flag 都支持**重复传递**与**逗号分隔**（`--agent codex,opencode`）。
 
 ### skills
 
 ```sh
-agent-env skills apply    [--agent A]... [--skill S]... [--skills a,b] [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged]
+agent-env skills apply    [--agent A]... [--skill S]... [--skills a,b] [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--no-repo]
 agent-env skills dry-run  [同上 flags]
 agent-env skills list                     # 打印 config.toml 原文
 agent-env skills profiles                 # 列出可声明的 profiles（排序去重，排除保留字 global；无则 rc=1）
@@ -150,6 +151,7 @@ agent-env skills status   [--agent A]... [--profile P]...    # 只读：repo 级
 - 全局条目（profiles 含 `global`）由 chezmoi 91 钩子自动同步（全局 config 变化触发 `cd $HOME && agent-env skills apply --non-interactive --skip-unchanged`）。
 - repo 级条目必须显式提供选择：没有 `.agent-env.toml` 也没有 `--profile` 时跳过并提示；有选择时按 `条目 profiles ∩ 选择 ≠ ∅` 门禁。
 - `--skip-unchanged` 靠 stamp 去重，且只用于完整运行（与 `--agent`/`--skill` 组合报错；dry-run 永不写 stamp）。
+- `--no-repo` 只用于 apply/dry-run：跳过 repo 发现、只装全局条目、静默排除 repo 级条目，且与 `--profile` 互斥；`list`/`profiles`/`resolve`/`status` 拒绝该 flag。chezmoi 91 钩子从 `$HOME` 运行、没有 repo 上下文，可用它显式声明这一点。
 - 只读命令 `resolve`/`status` 需要 repo 配置或 `--profile`，且拒绝 `--skill`/`--skills`、`--skip-unchanged`；`profiles`/`list` 拒绝一切过滤器。
 - `list` 只读 `[[installs]]`，忽略 `[[servers]]`。
 
@@ -166,7 +168,7 @@ skills 的实际安装委托给 [vercel-labs/skills](https://github.com/vercel-l
 ### mcp
 
 ```sh
-agent-env mcp apply       [--agent A]... [--name N]... [--names a,b] [--profile P]... [--profiles a,b] [--non-interactive]
+agent-env mcp apply       [--agent A]... [--name N]... [--names a,b] [--profile P]... [--profiles a,b] [--non-interactive] [--no-repo]
 agent-env mcp dry-run     [同上 flags]
 agent-env mcp list                        # 打印 config.toml 原文
 agent-env mcp profiles                    # 列出可声明的 profiles（排除 global）
@@ -188,6 +190,7 @@ agent-env mcp upsert-stdin --agent AGENT  # stdin→stdout：插入/替换该 ag
 > MCP 域的 claude 规范名是 `claude-code`（旧写法 `claude` 仍被接受并自动归一）；`trae-cn` 与 `trae` 共用同一份 `traecli.yaml`。
 
 - 全局 codex/trae/opencode 由 chezmoi `modify_` 脚本在 apply 内直接算出最终内容：渲染 base 后 pipe 给 `agent-env mcp upsert-stdin --agent X`（与全局 apply 共享同一渲染核心，字节级一致），chezmoi 自己写文件，无外部 writer、无 drift。
+- `--no-repo` 只用于 apply/dry-run：跳过 repo 发现、只装全局条目、静默排除 repo 级条目，且与 `--profile` 互斥；`list`/`profiles`/`upsert-stdin` 拒绝该 flag。chezmoi 92 钩子从 `$HOME` 运行、没有 repo 上下文，可用它显式声明这一点。
 - `pi` / `omp` 没有 chezmoi `modify_` 模板，全局由 `agent-env mcp apply` 直接写（chezmoi 92 钩子每次 apply 都会跑）：整体管理顶层 `mcpServers` 键，其余顶层键保留；目标文件不存在且无条目时不创建空文件。
 - `list`/`profiles` 只读 `[[servers]]`，忽略 `[[installs]]`。
 

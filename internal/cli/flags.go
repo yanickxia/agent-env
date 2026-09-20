@@ -32,6 +32,7 @@ type filterFlags struct {
 	noInter2 bool
 	skipUnch bool
 	interact bool
+	noRepo   bool
 }
 
 // addFilterFlags registers the full filter surface on every skills
@@ -49,6 +50,7 @@ func addFilterFlags(cmd *cobra.Command, f *filterFlags) {
 	fl.BoolVar(&f.noInter2, "no-interactive", false, "alias for --non-interactive")
 	fl.BoolVar(&f.skipUnch, "skip-unchanged", false, "skip entries whose stamp matches the last apply")
 	fl.BoolVar(&f.interact, "interactive", false, "interactive selection (not supported)")
+	fl.BoolVar(&f.noRepo, "no-repo", false, "no repo context: skip .agent-env.toml discovery and install global entries only (mutually exclusive with --profile)")
 }
 
 func (f *filterFlags) toFilters(cmd *cobra.Command, command string) skills.Filters {
@@ -57,6 +59,7 @@ func (f *filterFlags) toFilters(cmd *cobra.Command, command string) skills.Filte
 		NonInteractive: f.noInter || f.yes || f.noInter2,
 		Interactive:    f.interact,
 		SkipUnchanged:  f.skipUnch,
+		NoRepo:         f.noRepo,
 	}
 	fl.Agents = flattenComma(f.agents)
 	fl.Profiles = append(flattenComma(f.profile), flattenComma(f.profiles)...)

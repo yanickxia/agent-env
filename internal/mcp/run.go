@@ -54,6 +54,7 @@ type Filters struct {
 
 	NonInteractive bool
 	Interactive    bool
+	NoRepo         bool
 }
 
 type runner struct {
@@ -174,7 +175,7 @@ func appendUnique(list []string, item string) []string {
 }
 
 func (r *runner) anyFilterSeen() bool {
-	return r.f.AgentSeen || r.f.ProfileSeen || len(r.f.Names) > 0
+	return r.f.AgentSeen || r.f.ProfileSeen || len(r.f.Names) > 0 || r.f.NoRepo
 }
 
 // loadSecrets parses secrets.toml once and caches redaction values.
@@ -234,6 +235,12 @@ func (r *runner) loadServers() error {
 // AGENT_ENV_REPO_CONFIG) is single-file mode; otherwise .agent-env.toml files
 // are discovered from the working directory up to "/" and merged.
 func (r *runner) loadRepo() error {
+	// --no-repo is an explicit declaration of "no repo context": skip the
+	// .agent-env.toml walk (and AGENT_ENV_REPO_CONFIG/explicit path) entirely so
+	// an ancestor config can never leak repo-level servers into a global run.
+	if r.f.NoRepo {
+		return nil
+	}
 	start := r.opts.WorkDir
 	if start == "" {
 		start = r.opts.ProjectRoot
@@ -362,7 +369,7 @@ func (r *runner) cmdUpsertStdin() error {
 	if len(r.f.Agents) != 1 {
 		return fmt.Errorf("%s: upsert-stdin requires exactly one --agent AGENT", config.Prog)
 	}
-	if r.f.ProfileSeen || len(r.f.Names) > 0 {
+	if r.f.ProfileSeen || len(r.f.Names) > 0 || r.f.NoRepo {
 		return fmt.Errorf("%s: upsert-stdin does not accept filters", config.Prog)
 	}
 	if _, err := os.Stat(r.opts.ManifestPath); err != nil {
@@ -401,6 +408,9 @@ func (r *runner) cmdUpsertStdin() error {
 // --- apply / dry-run ---------------------------------------------------------
 
 func (r *runner) cmdSync() error {
+	if r.f.NoRepo && r.f.ProfileSeen {
+		return fmt.Errorf("%s: --no-repo cannot be combined with --profile/--profiles; --no-repo only installs global entries, drop --profile", config.Prog)
+	}
 	if r.f.Command == CmdApply && !r.f.NonInteractive {
 		return fmt.Errorf("%s: interactive selection is not supported yet; pass --non-interactive or an explicit filter (--agent/--name/--profile)", config.Prog)
 	}
@@ -492,7 +502,7 @@ func (r *runner) processManifest(mode string) error {
 			named := row.Name != "" && containsString(r.effectiveNames, row.Name)
 			profiled := len(row.Profiles) > 0 && profilesIntersect(row.Profiles, r.effectiveProf)
 			if !named && !profiled {
-				if r.effectiveProf == "" && len(r.effectiveNames) == 0 {
+				if !r.f.NoRepo && r.effectiveProf == "" && len(r.effectiveNames) == 0 {
 					repoLevelSkips++
 				}
 				continue

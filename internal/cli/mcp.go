@@ -20,6 +20,7 @@ type mcpFilterFlags struct {
 	yes      bool
 	noInter2 bool
 	interact bool
+	noRepo   bool
 }
 
 func addMCPFilterFlags(cmd *cobra.Command, f *mcpFilterFlags) {
@@ -33,6 +34,7 @@ func addMCPFilterFlags(cmd *cobra.Command, f *mcpFilterFlags) {
 	fl.BoolVarP(&f.yes, "yes", "y", false, "alias for --non-interactive")
 	fl.BoolVar(&f.noInter2, "no-interactive", false, "alias for --non-interactive")
 	fl.BoolVar(&f.interact, "interactive", false, "interactive selection (not supported)")
+	fl.BoolVar(&f.noRepo, "no-repo", false, "no repo context: skip .agent-env.toml discovery and install global entries only (mutually exclusive with --profile)")
 }
 
 func (f *mcpFilterFlags) toFilters(cmd *cobra.Command, command string) mcp.Filters {
@@ -40,6 +42,7 @@ func (f *mcpFilterFlags) toFilters(cmd *cobra.Command, command string) mcp.Filte
 		Command:        command,
 		NonInteractive: f.noInter || f.yes || f.noInter2,
 		Interactive:    f.interact,
+		NoRepo:         f.noRepo,
 	}
 	fl.Agents = flattenComma(f.agents)
 	fl.Names = append(append([]string{}, f.name...), flattenComma(f.names)...)

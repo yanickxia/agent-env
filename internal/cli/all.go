@@ -21,6 +21,7 @@ type allFlags struct {
 	yes      bool
 	noInter2 bool
 	skipUnch bool
+	noRepo   bool
 }
 
 func addAllFlags(cmd *cobra.Command, f *allFlags) {
@@ -32,6 +33,7 @@ func addAllFlags(cmd *cobra.Command, f *allFlags) {
 	fl.BoolVarP(&f.yes, "yes", "y", false, "alias for --non-interactive")
 	fl.BoolVar(&f.noInter2, "no-interactive", false, "alias for --non-interactive")
 	fl.BoolVar(&f.skipUnch, "skip-unchanged", false, "skills only: skip entries whose stamp matches the last apply (MCP ignores this)")
+	fl.BoolVar(&f.noRepo, "no-repo", false, "no repo context: skip .agent-env.toml discovery and install global entries only (mutually exclusive with --profile)")
 }
 
 // sharedFilters is the normalized, domain-neutral filter set passed to both
@@ -44,6 +46,7 @@ type sharedFilters struct {
 	profileSeen    bool
 	nonInteractive bool
 	skipUnchanged  bool
+	noRepo         bool
 }
 
 func (f *allFlags) toShared(cmd *cobra.Command, command string) sharedFilters {
@@ -55,6 +58,7 @@ func (f *allFlags) toShared(cmd *cobra.Command, command string) sharedFilters {
 		profileSeen:    cmd.Flags().Changed("profile") || cmd.Flags().Changed("profiles"),
 		nonInteractive: f.noInter || f.yes || f.noInter2,
 		skipUnchanged:  f.skipUnch,
+		noRepo:         f.noRepo,
 	}
 }
 
@@ -75,6 +79,7 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 		ProfileSeen:    sf.profileSeen,
 		NonInteractive: sf.nonInteractive,
 		SkipUnchanged:  sf.skipUnchanged,
+		NoRepo:         sf.noRepo,
 	})
 
 	fmt.Fprintln(out, "=== mcp ===")
@@ -85,6 +90,7 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 		AgentSeen:      sf.agentSeen,
 		ProfileSeen:    sf.profileSeen,
 		NonInteractive: sf.nonInteractive,
+		NoRepo:         sf.noRepo,
 	})
 
 	return skillsErr, mcpErr
@@ -93,7 +99,7 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 func newAllCmd(command, short string) *cobra.Command {
 	var f allFlags
 	c := &cobra.Command{
-		Use:   command + " [--agent AGENT]... [--profile PROFILE]... [--non-interactive] [--skip-unchanged]",
+		Use:   command + " [--agent AGENT]... [--profile PROFILE]... [--non-interactive] [--skip-unchanged] [--no-repo]",
 		Short: short,
 		Long: "Run both domains in one shot: skills first, then MCP. Both domains always run,\n" +
 			"even when the first one fails; the exit code is non-zero when either fails.\n\n" +
@@ -103,6 +109,9 @@ func newAllCmd(command, short string) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sf := f.toShared(cmd, command)
+			if sf.noRepo && sf.profileSeen {
+				return &ExitError{Code: 1, Msg: "agent-env: --no-repo cannot be combined with --profile/--profiles; --no-repo only installs global entries, drop --profile"}
+			}
 			if command == skills.CmdApply && !sf.nonInteractive {
 				return &ExitError{Code: 1, Msg: "agent-env: apply requires --non-interactive (interactive selection is not supported)"}
 			}

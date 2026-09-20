@@ -11,7 +11,7 @@ import (
 )
 
 func (r *runner) anyFilterSeen() bool {
-	return r.f.AgentSeen || r.f.SkillSeen || r.f.ProfileSeen
+	return r.f.AgentSeen || r.f.SkillSeen || r.f.ProfileSeen || r.f.NoRepo
 }
 
 func (r *runner) cmdList() error {
@@ -57,6 +57,9 @@ func (r *runner) cmdProfiles() error {
 }
 
 func (r *runner) cmdApply() error {
+	if r.f.NoRepo && r.f.ProfileSeen {
+		return fmt.Errorf("%s: --no-repo cannot be combined with --profile/--profiles; --no-repo only installs global entries, drop --profile", config.Prog)
+	}
 	if r.f.SkipUnchanged && (r.f.AgentSeen || r.f.SkillSeen) {
 		return fmt.Errorf("%s: --skip-unchanged cannot be combined with --agent/--skill/--skills; stamps are only read/written by complete runs", config.Prog)
 	}
@@ -86,6 +89,9 @@ func (r *runner) cmdResolve() error {
 }
 
 func (r *runner) resolveStatusGating() error {
+	if r.f.NoRepo {
+		return fmt.Errorf("%s: --no-repo is supported for apply and dry-run, not resolve/status", config.Prog)
+	}
 	if r.repoMissing && len(r.f.Profiles) == 0 {
 		start := r.opts.StartDir
 		if start == "" {
@@ -125,7 +131,7 @@ func (r *runner) processManifest(mode string) error {
 			named := entry.Name != "" && stringInList(r.effectiveNames, entry.Name)
 			profiled := len(entry.Profiles) > 0 && profilesIntersect(entry.ProfilesRaw, r.effectiveProf)
 			if !named && !profiled {
-				if r.effectiveProf == "" && len(r.effectiveNames) == 0 {
+				if !r.f.NoRepo && r.effectiveProf == "" && len(r.effectiveNames) == 0 {
 					repoLevelSkips++
 				}
 				continue

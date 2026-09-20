@@ -318,3 +318,64 @@ command = "npx"
 		t.Fatalf("server named clickup must be selected:\n%s", out)
 	}
 }
+
+func TestAllInOneNoRepoPassedToBothDomains(t *testing.T) {
+	f := newAllFixture(t)
+	// A repo config that would otherwise select the base entries.
+	if err := os.WriteFile(f.sOpts.RepoConfigPath, []byte("profiles = [\"base\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.writeManifest(t, `
+[[installs]]
+source = "example/skills-global"
+agents = ["codex"]
+skills = ["a"]
+profiles = ["global"]
+
+[[installs]]
+source = "example/skills-base"
+agents = ["codex"]
+skills = ["b"]
+profiles = ["base"]
+
+[[servers]]
+name = "mcp-global"
+agents = ["codex"]
+type = "stdio"
+command = "npx"
+profiles = ["global"]
+
+[[servers]]
+name = "mcp-base"
+agents = ["codex"]
+type = "stdio"
+command = "npx"
+profiles = ["base"]
+`)
+	sf := sharedFilters{command: skills.CmdDryRun, nonInteractive: true, noRepo: true}
+	sErr, mErr := runAll(sf, f.sOpts, f.mOpts)
+	if sErr != nil || mErr != nil {
+		t.Fatalf("runAll errors: skills=%v mcp=%v", sErr, mErr)
+	}
+	out := f.out.String()
+	if !strings.Contains(out, "example/skills-global") || !strings.Contains(out, "mcp-global") {
+		t.Fatalf("global entries must install under --no-repo:\n%s", out)
+	}
+	if strings.Contains(out, "example/skills-base") || strings.Contains(out, "mcp-base") {
+		t.Fatalf("repo-level entries must be excluded under --no-repo:\n%s", out)
+	}
+	if strings.Contains(f.errb.String(), "no .agent-env.toml") {
+		t.Fatalf("--no-repo must not warn about repo-level skips: %q", f.errb.String())
+	}
+}
+
+func TestAllInOneRejectsNoRepoWithProfile(t *testing.T) {
+	cmd := newAllCmd("dry-run", "test")
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"--no-repo", "--profile", "base"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined with --profile") {
+		t.Fatalf("want no-repo/profile combination error, got %v", err)
+	}
+}

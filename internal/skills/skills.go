@@ -53,6 +53,7 @@ type Filters struct {
 	NonInteractive bool
 	Interactive    bool
 	SkipUnchanged  bool
+	NoRepo         bool
 }
 
 type runner struct {
@@ -175,6 +176,13 @@ func (r *runner) loadRepo() error {
 		return nil
 	}
 	r.repoLoaded = true
+
+	// --no-repo is an explicit declaration of "no repo context": skip the
+	// .agent-env.toml walk (and AGENT_ENV_REPO_CONFIG/explicit path) entirely so
+	// an ancestor config can never leak repo-level entries into a global run.
+	if r.f.NoRepo {
+		return nil
+	}
 
 	start := r.opts.StartDir
 	if start == "" {
