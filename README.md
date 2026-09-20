@@ -131,7 +131,7 @@ agent-env dry-run  [同上 flags]
 ```
 
 - 语义：先跑 skills、再跑 MCP，**两者都执行**（即使第一个失败也继续第二个）；输出以 `=== skills ===` / `=== mcp ===` 分隔；最终 exit code = 任一非零则非零。
-- `--skip-unchanged` 只传给 skills，MCP 忽略（help 中已说明）。
+- `--skip-unchanged` 只传给 skills，MCP 忽略（help 中已说明）；skills 全局条目的 `[user]` stamp 无需该 flag 即参与判定。
 - `--skill` / `--name` 等域专属 flag 不在顶层定义，cobra 会将其视为未知 flag 拒绝；需要时用对应的 `skills` / `mcp` 子命令。
 - `apply` 必须带 `--non-interactive`（未提供交互选择）。
 - `--no-repo` 表示**无 repo 上下文**：跳过 `.agent-env.toml` 逐级发现（也不读 `AGENT_ENV_REPO_CONFIG`/显式路径），只装全局条目，静默排除 repo 级条目（不打印跳过提示）；与 `--profile`/`--profiles` 互斥。chezmoi 全局钩子从 `$HOME` 运行时使用它，避免祖先目录意外出现 `.agent-env.toml` 时把 repo 级条目装进全局。
@@ -150,7 +150,7 @@ agent-env skills status   [--agent A]... [--profile P]...    # 只读：repo 级
 
 - 全局条目（profiles 含 `global`）由 chezmoi 91 钩子自动同步（全局 config 变化触发 `cd $HOME && agent-env skills apply --non-interactive --skip-unchanged`）。
 - repo 级条目必须显式提供选择：没有 `.agent-env.toml` 也没有 `--profile` 时跳过并提示；有选择时按 `条目 profiles ∩ 选择 ≠ ∅` 门禁。
-- `--skip-unchanged` 靠 stamp 去重，且只用于完整运行（与 `--agent`/`--skill` 组合报错；dry-run 永不写 stamp）。
+- 全局条目的 `[user]` stamp 在**每次** apply/dry-run 都参与判定：匹配即跳过（打印 `# skip (unchanged): ... [user]`），未过滤的完整 apply 安装成功后写入，因此裸 `agent-env apply` 不会重跑已同步的全局条目。`--skip-unchanged` 现在只额外控制 **repo 级条目**的 `project` stamp（传了才读写），且只用于完整运行（与 `--agent`/`--skill` 组合报错；dry-run 永不写 stamp）。被 `--agent`/`--skill`/`--skills` 收窄的运行仍用全局 stamp 判定跳过，但安装后不写 stamp（签名描述声明的形状，而非收窄后的实际安装集）。
 - `--no-repo` 只用于 apply/dry-run：跳过 repo 发现、只装全局条目、静默排除 repo 级条目，且与 `--profile` 互斥；`list`/`profiles`/`resolve`/`status` 拒绝该 flag。chezmoi 91 钩子从 `$HOME` 运行、没有 repo 上下文，可用它显式声明这一点。
 - 只读命令 `resolve`/`status` 需要 repo 配置或 `--profile`，且拒绝 `--skill`/`--skills`、`--skip-unchanged`；`profiles`/`list` 拒绝一切过滤器。
 - `list` 只读 `[[installs]]`，忽略 `[[servers]]`。

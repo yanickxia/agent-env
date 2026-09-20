@@ -177,8 +177,12 @@ func (r *runner) processManifest(mode string) error {
 			signatureScope = "user"
 		}
 
+		// Global entries carry a context-free "user" stamp, so their lookup runs
+		// on every apply (not just under --skip-unchanged): a matching stamp
+		// means the global install is already in sync and npx is not re-run.
+		// Repo-level "project" stamps stay opt-in via --skip-unchanged.
 		entrySig := ""
-		if r.f.SkipUnchanged {
+		if r.f.SkipUnchanged || entry.Global {
 			if entry.Global {
 				entrySig = stamp.Signature(source, agentsRaw, skillsRaw, entry.Mode, signatureScope, entry.Installer, entry.EnvRaw, "", "")
 			} else {
@@ -239,7 +243,15 @@ func (r *runner) processManifest(mode string) error {
 			}
 		}
 
-		if r.f.SkipUnchanged && mode == CmdApply && (installedViaNpx || installedViaAiden) {
+		// Global [user] stamps are refreshed on every apply so the next plain
+		// apply can skip. A narrowed run (--agent/--skill/--skills) must not
+		// write: the user signature describes the declared shape, not the
+		// narrowed install set, so writing would falsely mark it in sync.
+		writeStamp := r.f.SkipUnchanged
+		if entry.Global && len(r.f.Agents) == 0 && len(r.f.Skills) == 0 {
+			writeStamp = true
+		}
+		if writeStamp && mode == CmdApply && (installedViaNpx || installedViaAiden) {
 			if err := store.Write(source, stampScope, entrySig); err != nil {
 				return err
 			}
