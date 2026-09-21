@@ -121,3 +121,86 @@ func TestForceRejectedByReadOnlyCommands(t *testing.T) {
 		t.Fatal("status must reject --force")
 	}
 }
+
+func TestForceInRepoKeepsGlobalStamps(t *testing.T) {
+	f := newFixture(t)
+	log := filepath.Join(f.dir, "npx.log")
+	t.Setenv("NPX_LOG", log)
+	f.writeRepo(`profiles = ["ark-mlops"]`)
+	f.writeManifest(`
+[[installs]]
+source = "example/global"
+agents = ["codex"]
+skills = ["g1"]
+profiles = ["global"]
+
+[[installs]]
+source = "example/repo"
+agents = ["codex"]
+skills = ["r1"]
+profiles = ["ark-mlops"]
+`)
+
+	// First apply installs both and writes stamps.
+	fl := Filters{Command: CmdApply, NonInteractive: true, SkipUnchanged: true}
+	if _, _, err := f.run(fl); err != nil {
+		t.Fatalf("first apply failed: %v", err)
+	}
+	if got := lineCount(t, log); got != 2 {
+		t.Fatalf("npx calls after first apply = %d, want 2", got)
+	}
+
+	// --force in a repo run reinstalls only repo-level entries; the global
+	// entry keeps its stamp and skips.
+	forceOpts := f.opts
+	forceOpts.Force = true
+	out, _, err := f.runWith(forceOpts, fl)
+	if err != nil {
+		t.Fatalf("force apply failed: %v", err)
+	}
+	if !strings.Contains(out, "skip (unchanged): example/global [user]") {
+		t.Fatalf("global entry must keep its stamp in a repo force run:\n%s", out)
+	}
+	if strings.Contains(out, "skip (unchanged): example/repo") {
+		t.Fatalf("repo-level entry must be forced:\n%s", out)
+	}
+	if got := lineCount(t, log); got != 3 {
+		t.Fatalf("npx calls after force = %d, want 3 (repo-level only)", got)
+	}
+}
+
+func TestForceNoRepoReinstallsGlobals(t *testing.T) {
+	f := newFixture(t)
+	log := filepath.Join(f.dir, "npx.log")
+	t.Setenv("NPX_LOG", log)
+	f.writeManifest(`
+[[installs]]
+source = "example/global"
+agents = ["codex"]
+skills = ["g1"]
+profiles = ["global"]
+`)
+
+	// First --no-repo apply installs the global entry and writes its stamp.
+	fl := Filters{Command: CmdApply, NonInteractive: true, NoRepo: true, SkipUnchanged: true}
+	if _, _, err := f.run(fl); err != nil {
+		t.Fatalf("first apply failed: %v", err)
+	}
+	if got := lineCount(t, log); got != 1 {
+		t.Fatalf("npx calls after first apply = %d, want 1", got)
+	}
+
+	// --no-repo --force still reinstalls globals (interrupted-install repair).
+	forceOpts := f.opts
+	forceOpts.Force = true
+	out, _, err := f.runWith(forceOpts, fl)
+	if err != nil {
+		t.Fatalf("force apply failed: %v", err)
+	}
+	if strings.Contains(out, "skip (unchanged)") {
+		t.Fatalf("no-repo force must reinstall globals:\n%s", out)
+	}
+	if got := lineCount(t, log); got != 2 {
+		t.Fatalf("npx calls after force = %d, want 2", got)
+	}
+}

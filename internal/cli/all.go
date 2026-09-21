@@ -34,7 +34,7 @@ func addAllFlags(cmd *cobra.Command, f *allFlags) {
 	fl.BoolVarP(&f.yes, "yes", "y", false, "alias for --non-interactive")
 	fl.BoolVar(&f.noInter2, "no-interactive", false, "alias for --non-interactive")
 	fl.BoolVar(&f.skipUnch, "skip-unchanged", false, "skills only: skip entries whose stamp matches the last apply (MCP ignores this)")
-	fl.BoolVar(&f.force, "force", false, "skills only: reinstall active entries even when the stamp matches (repairs interrupted installs); overrides --skip-unchanged, ignored by MCP")
+	fl.BoolVar(&f.force, "force", false, "skills only: reinstall the entries owned by the current context even when stamps match (repo-level in a repo run, global with --no-repo; repairs interrupted installs); overrides --skip-unchanged, ignored by MCP")
 	fl.BoolVar(&f.noRepo, "no-repo", false, "no repo context: skip .agent-env.toml discovery and install global entries only (mutually exclusive with --profile)")
 }
 

@@ -186,8 +186,11 @@ func (r *runner) processManifest(mode string) error {
 		// on every apply (not just under --skip-unchanged): a matching stamp
 		// means the global install is already in sync and npx is not re-run.
 		// Repo-level "project" stamps stay opt-in via --skip-unchanged.
-		// --force skips the stamp lookup entirely (reinstall), but the signature
-		// is still computed so a normal apply can write it back afterwards.
+		// --force is scope-aware: it reinstalls the entries owned by the current
+		// context — repo-level entries in a repo run, global entries with
+		// --no-repo. In a repo run, global stamps are still consulted, so
+		// forcing a repo never re-runs the global installs. The signature is
+		// always computed so a normal apply can write it back afterwards.
 		entrySig := ""
 		if r.f.SkipUnchanged || entry.Global || r.opts.Force {
 			if entry.Global {
@@ -195,7 +198,8 @@ func (r *runner) processManifest(mode string) error {
 			} else {
 				entrySig = stamp.Signature(source, selectedAgents, skillsRaw, entry.Mode, signatureScope, entry.Installer, entry.EnvRaw, r.effectiveProf, projectRoot)
 			}
-			if (r.f.SkipUnchanged || entry.Global) && !r.opts.Force {
+			forceApplies := !entry.Global || r.f.NoRepo
+			if (r.f.SkipUnchanged || entry.Global) && !(r.opts.Force && forceApplies) {
 				if value, found := store.Lookup(source, stampScope); found && value == entrySig {
 					fmt.Fprintf(r.out, "# skip (unchanged): %s [%s]\n", source, stampScope)
 					r.runPostInstall(mode, source, entry.PostInstall)
