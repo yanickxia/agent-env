@@ -35,6 +35,7 @@ type Options struct {
 	StartDir       string
 	Home           string
 	Force          bool
+	Prune          bool
 	Stdout         io.Writer
 	Stderr         io.Writer
 }

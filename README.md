@@ -126,12 +126,12 @@ agent-env init PROFILE... [--name N]... [--agent A]... [--apply] [--dry-run]
 顶层 `apply` / `dry-run` 只接受两域**共享**的 flags：
 
 ```sh
-agent-env apply    [--agent A]... [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--force] [--no-repo]
+agent-env apply    [--agent A]... [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--force] [--prune] [--no-repo]
 agent-env dry-run  [同上 flags]
 ```
 
 - 语义：先跑 skills、再跑 MCP，**两者都执行**（即使第一个失败也继续第二个）；输出以 `=== skills ===` / `=== mcp ===` 分隔；最终 exit code = 任一非零则非零。
-- `--skip-unchanged` 只传给 skills，MCP 忽略（help 中已说明）；skills 全局条目的 `[user]` stamp 无需该 flag 即参与判定。
+- `--skip-unchanged`/`--force`/`--prune` 只传给 skills，MCP 忽略（MCP 的托管区域每次 apply 都整体重写，天然一致，无需 prune）。
 - `--skill` / `--name` 等域专属 flag 不在顶层定义，cobra 会将其视为未知 flag 拒绝；需要时用对应的 `skills` / `mcp` 子命令。
 - `apply` 必须带 `--non-interactive`（未提供交互选择）。
 - `--no-repo` 表示**无 repo 上下文**：跳过 `.agent-env.toml` 逐级发现（也不读 `AGENT_ENV_REPO_CONFIG`/显式路径），只装全局条目，静默排除 repo 级条目（不打印跳过提示）；与 `--profile`/`--profiles` 互斥。chezmoi 全局钩子从 `$HOME` 运行时使用它，避免祖先目录意外出现 `.agent-env.toml` 时把 repo 级条目装进全局。
@@ -140,7 +140,7 @@ agent-env dry-run  [同上 flags]
 ### skills
 
 ```sh
-agent-env skills apply    [--agent A]... [--skill S]... [--skills a,b] [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--force] [--no-repo]
+agent-env skills apply    [--agent A]... [--skill S]... [--skills a,b] [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--force] [--prune] [--no-repo]
 agent-env skills dry-run  [同上 flags]
 agent-env skills list                     # 打印 config.toml 原文
 agent-env skills profiles                 # 列出可声明的 profiles（排序去重，排除保留字 global；无则 rc=1）
@@ -153,7 +153,13 @@ agent-env skills status   [--agent A]... [--profile P]...    # 只读：repo 级
 - 全局条目的 `[user]` stamp 在**每次** apply/dry-run 都参与判定：匹配即跳过（打印 `# skip (unchanged): ... [user]`），未过滤的完整 apply 安装成功后写入，因此裸 `agent-env apply` 不会重跑已同步的全局条目。`--skip-unchanged` 现在只额外控制 **repo 级条目**的 `project` stamp（传了才读写），且只用于完整运行（与 `--agent`/`--skill` 组合报错；dry-run 永不写 stamp）。被 `--agent`/`--skill`/`--skills` 收窄的运行仍用全局 stamp 判定跳过，但安装后不写 stamp（签名描述声明的形状，而非收窄后的实际安装集）。
 - `--no-repo` 只用于 apply/dry-run：跳过 repo 发现、只装全局条目、静默排除 repo 级条目，且与 `--profile` 互斥；`list`/`profiles`/`resolve`/`status` 拒绝该 flag。chezmoi 91 钩子从 `$HOME` 运行、没有 repo 上下文，可用它显式声明这一点。
 - **`--force` 中断恢复**：强制重装所有活跃条目，忽略 stamp 判定——用于“安装中途退出导致 store 与 stamp 不一致”的自愈（例如 store 缺文件但 state.tsv 仍标记已装）。`--force` 优先于 `--skip-unchanged`（同传时 force 生效，不报错），可与 `--skill`/`--agent` 组合只重装子集；重装成功后写回 stamp，之后普通 apply 恢复 skip。MCP 无 stamp、天然幂等，`--force` 对其为 no-op。
-- 只读命令 `resolve`/`status` 需要 repo 配置或 `--profile`，且拒绝 `--skill`/`--skills`、`--skip-unchanged`、`--force`；`profiles`/`list` 拒绝一切过滤器。
+- **`--prune` 强制一致**：apply/dry-run 末尾清理“agent-env 装过、但当前上下文已不再活跃”的 skills（配置删除条目、改 profile、改 repo 选择都算）。作用域与 `--force` 对齐——repo run 只处理 `project:<repo_root>` stamp（删 `<repo>/.agents/skills/<skill>/`，并顺带删指向它的 `<repo>/.claude/skills/<skill>` symlink）；`--no-repo`（或从 `$HOME` 运行）只处理 `user` stamp（删 `~/.agents/skills/<skill>/`）。判定与删除规则：
+  - 只处理**有 stamp 的 source**：lock（repo run 用 `<repo>/skills-lock.json`，全局用 `~/.agents/.skill-lock.json`）反查该 source 装过哪些 skill；**lock 里有、stamp 里没有的 source = 手工 `npx skills add`，一律不碰**。
+  - 同名保护：若另一个**活跃** source 也提供同名 skill，保留目录（stamp 照删）。
+  - lock 无该 source 记录（从未记录 / 被清过 / 文件不存在）→ 只删 stamp 行，目录无法可靠定位则不删。
+  - lock 文件属 skills CLI，agent-env **只读不改**；残留 lock 条目可用 `npx skills remove` 清理。
+  - `dry-run --prune` 只打印 `would prune: ...` 清单，不删目录、不动 stamp；实跑打印 `pruned: ...` + 汇总；无过期时打印 `nothing to prune`。`--prune` 与 `--force` 可组合（force 重装活跃集 + prune 清理过期集）。剪枝后仍以完整清单的活跃集为准：`--agent`/`--skill` 只收窄安装集，不会让未重装的活跃条目被误判为过期而删除。
+- 只读命令 `resolve`/`status` 需要 repo 配置或 `--profile`，且拒绝 `--skill`/`--skills`、`--skip-unchanged`、`--force`、`--prune`；`profiles`/`list` 拒绝一切过滤器。
 - `list` 只读 `[[installs]]`，忽略 `[[servers]]`。
 
 #### 分发机制（npx skills）
@@ -341,7 +347,7 @@ dry-run 脱敏：**来自 secrets.toml 的所有值出现即替换为 `***redact
 go test ./...
 ```
 
-table-driven Go 测试覆盖：manifest/repo config 校验矩阵（含 global 保留字、scope 字段拒绝）、全局条目无选择照装、repo 级无选择两域都跳过、profile 选择/交集/agents 收窄、stamp 签名与真实状态文件字节兼容、installer 命令构造、claude symlink 特例、skip-unchanged 全流程、MCP `${VAR}`/脱敏、三渲染器 marker 语义、claude 保序 patch、upsert-stdin 与 apply 字节等价、aiden 命令构造、init 新建/合并/apply 透传、顶层 all-in-one 双域执行/失败聚合/flag 透传。
+table-driven Go 测试覆盖：manifest/repo config 校验矩阵（含 global 保留字、scope 字段拒绝）、全局条目无选择照装、repo 级无选择两域都跳过、profile 选择/交集/agents 收窄、stamp 签名与真实状态文件字节兼容、installer 命令构造、claude symlink 特例、skip-unchanged 全流程、`--prune` 矩阵（全局/repo 剪枝、手工安装保护、同名保护、dry-run 只列表、lock 缺失、force 组合、只读拒绝）、MCP `${VAR}`/脱敏、三渲染器 marker 语义、claude 保序 patch、upsert-stdin 与 apply 字节等价、aiden 命令构造、init 新建/合并/apply 透传、顶层 all-in-one 双域执行/失败聚合/flag 透传。
 
 ## 文件布局
 

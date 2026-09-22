@@ -41,6 +41,7 @@ func newSkillsActionCmd(use, short, command string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := resolveOptions()
 			opts.Force = f.force
+			opts.Prune = f.prune
 			fl := f.toFilters(cmd, command)
 			if err := skills.Run(opts, fl); err != nil {
 				return &ExitError{Code: 1, Msg: err.Error()}

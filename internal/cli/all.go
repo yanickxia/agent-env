@@ -23,6 +23,7 @@ type allFlags struct {
 	skipUnch bool
 	noRepo   bool
 	force    bool
+	prune    bool
 }
 
 func addAllFlags(cmd *cobra.Command, f *allFlags) {
@@ -35,6 +36,7 @@ func addAllFlags(cmd *cobra.Command, f *allFlags) {
 	fl.BoolVar(&f.noInter2, "no-interactive", false, "alias for --non-interactive")
 	fl.BoolVar(&f.skipUnch, "skip-unchanged", false, "skills only: skip entries whose stamp matches the last apply (MCP ignores this)")
 	fl.BoolVar(&f.force, "force", false, "skills only: reinstall the entries owned by the current context even when stamps match (repo-level in a repo run, global with --no-repo; repairs interrupted installs); overrides --skip-unchanged, ignored by MCP")
+	fl.BoolVar(&f.prune, "prune", false, "skills only: after apply/dry-run, clean up stamped installs whose source is no longer active (repo-level in a repo run, global with --no-repo); manual installs are never touched. Ignored by MCP, whose managed regions are already fully replaced")
 	fl.BoolVar(&f.noRepo, "no-repo", false, "no repo context: skip .agent-env.toml discovery and install global entries only (mutually exclusive with --profile)")
 }
 
@@ -50,6 +52,7 @@ type sharedFilters struct {
 	skipUnchanged  bool
 	noRepo         bool
 	force          bool
+	prune          bool
 }
 
 func (f *allFlags) toShared(cmd *cobra.Command, command string) sharedFilters {
@@ -63,6 +66,7 @@ func (f *allFlags) toShared(cmd *cobra.Command, command string) sharedFilters {
 		skipUnchanged:  f.skipUnch,
 		noRepo:         f.noRepo,
 		force:          f.force,
+		prune:          f.prune,
 	}
 }
 
@@ -75,6 +79,7 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 	}
 
 	sOpts.Force = sf.force
+	sOpts.Prune = sf.prune
 
 	fmt.Fprintln(out, "=== skills ===")
 	skillsErr = skills.Run(sOpts, skills.Filters{
@@ -105,13 +110,14 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 func newAllCmd(command, short string) *cobra.Command {
 	var f allFlags
 	c := &cobra.Command{
-		Use:   command + " [--agent AGENT]... [--profile PROFILE]... [--non-interactive] [--skip-unchanged] [--no-repo]",
+		Use:   command + " [--agent AGENT]... [--profile PROFILE]... [--non-interactive] [--skip-unchanged] [--force] [--prune] [--no-repo]",
 		Short: short,
 		Long: "Run both domains in one shot: skills first, then MCP. Both domains always run,\n" +
 			"even when the first one fails; the exit code is non-zero when either fails.\n\n" +
-			"Only flags shared by both domains are accepted here. --skip-unchanged is\n" +
-			"passed to skills and ignored by MCP. Domain-specific filters such as --skill\n" +
-			"or --name live only on the `skills` / `mcp` subcommands.",
+			"Only flags shared by both domains are accepted here. --skip-unchanged, --force\n" +
+			"and --prune are passed to skills and ignored by MCP (MCP's managed regions are\n" +
+			"already fully replaced on every apply, so no prune is needed). Domain-specific\n" +
+			"filters such as --skill or --name live only on the `skills` / `mcp` subcommands.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sf := f.toShared(cmd, command)

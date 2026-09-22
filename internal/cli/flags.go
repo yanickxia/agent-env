@@ -34,6 +34,7 @@ type filterFlags struct {
 	interact bool
 	noRepo   bool
 	force    bool
+	prune    bool
 }
 
 // addFilterFlags registers the full filter surface on every skills
@@ -53,6 +54,7 @@ func addFilterFlags(cmd *cobra.Command, f *filterFlags) {
 	fl.BoolVar(&f.interact, "interactive", false, "interactive selection (not supported)")
 	fl.BoolVar(&f.noRepo, "no-repo", false, "no repo context: skip .agent-env.toml discovery and install global entries only (mutually exclusive with --profile)")
 	fl.BoolVar(&f.force, "force", false, "reinstall the entries owned by the current context even when stamps match: repo-level entries in a repo run, global entries with --no-repo (repairs interrupted installs); overrides --skip-unchanged")
+	fl.BoolVar(&f.prune, "prune", false, "after apply/dry-run, clean up stamped installs whose source is no longer active in this context (repo-level in a repo run, global with --no-repo); manual installs without a stamp are never touched")
 }
 
 func (f *filterFlags) toFilters(cmd *cobra.Command, command string) skills.Filters {

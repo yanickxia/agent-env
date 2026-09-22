@@ -15,7 +15,7 @@ func (r *runner) anyFilterSeen() bool {
 }
 
 func (r *runner) cmdList() error {
-	if r.anyFilterSeen() || r.opts.Force {
+	if r.anyFilterSeen() || r.opts.Force || r.opts.Prune {
 		return fmt.Errorf("%s: filters are supported for apply and dry-run, not list", config.Prog)
 	}
 	data, err := os.ReadFile(r.opts.ManifestPath)
@@ -30,7 +30,7 @@ func (r *runner) cmdList() error {
 }
 
 func (r *runner) cmdProfiles() error {
-	if r.anyFilterSeen() || r.opts.Force {
+	if r.anyFilterSeen() || r.opts.Force || r.opts.Prune {
 		return fmt.Errorf("%s: filters are supported for apply and dry-run, not profiles", config.Prog)
 	}
 	entries, err := config.ParseManifest(r.opts.ManifestPath)
@@ -76,7 +76,15 @@ func (r *runner) cmdApply() error {
 	}
 	r.computeEffectiveProfiles()
 	r.detectClaudeSymlink()
-	return r.processManifest(r.f.Command)
+	if err := r.processManifest(r.f.Command); err != nil {
+		return err
+	}
+	// Prune runs at the very end, once the full active set is known, so it can
+	// tell a retired source from one that simply was not re-run.
+	if r.opts.Prune {
+		return r.prune(r.f.Command)
+	}
+	return nil
 }
 
 func (r *runner) cmdResolve() error {
@@ -111,6 +119,9 @@ func (r *runner) resolveStatusGating() error {
 	}
 	if r.opts.Force {
 		return fmt.Errorf("%s: --force is an apply flag; it is not supported by resolve/status", config.Prog)
+	}
+	if r.opts.Prune {
+		return fmt.Errorf("%s: --prune is an apply flag; it is not supported by resolve/status", config.Prog)
 	}
 	return nil
 }
