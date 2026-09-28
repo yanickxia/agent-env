@@ -120,6 +120,7 @@ agent-env apply    [...]                      # all-in-one：先 skills 再 MCP
 agent-env dry-run  [...]                      # all-in-one dry-run
 agent-env skills ...                          # skills 域
 agent-env mcp ...                             # MCP 域
+agent-env ls [...]                            # 只读：按 provider 列出实装的 skills/MCP
 agent-env init PROFILE... [--name N]... [--agent A]... [--apply] [--dry-run]
 ```
 
@@ -170,7 +171,49 @@ skills 的实际安装委托给 [vercel-labs/skills](https://github.com/vercel-l
 - **装到哪里**：全局（profiles 含 `global`）追加 `-g`，装进各 agent 的全局 skills 目录（`claude-code` → `~/.claude/skills/`、`codex` → `~/.codex/skills/`、`opencode` → `~/.config/opencode/skills/`、`pi` → `~/.pi/agent/skills/` 等，逐 agent 不同）；repo 级（profiles 不含 `global`）不加 `-g`，在 repo 根目录安装（`claude-code` → `.claude/skills/`，`codex` / `opencode` → `.agents/skills/`）。
 - **什么模式**：默认 symlink——各 agent 目录 symlink 到统一 skills store；`mode = "copy"` 追加 `--copy`，为每个 agent 复制独立副本。
 - **特例**：当 `~/.claude/skills` 本身已 symlink 到统一 skills store 时，运行时跳过 `-a claude-code` 并打印提示（claude 直接读 store）。
-- 仅 skills 域使用的字段：`installer`（当前仅 `skills`）、`post_install` 依赖钩子；`skills = ["*"]` 表示源内全部 skill。
+
+### ls
+
+```sh
+agent-env ls [--provider codex|claude-code|opencode]... [--declared] [--no-repo]
+```
+
+只读盘点：每个 provider **当前实际装了什么**（skills 目录条目 + MCP 配置里的 server），
+与 `apply` 的门禁语义完全一致，按「repo / global」两个 scope 分节输出：
+
+```text
+Codex (repo):
+  skills:
+    bytedcli
+  mcp:
+    repo-server
+Codex (global):
+  skills:
+    paseo
+  mcp:
+    hindsight
+```
+
+- **providers**：`codex` / `claude-code`（别名 `claude`）/ `opencode`；`--provider` 可重复、
+  逗号分隔，缺省列出全部三家。
+- **skills** 判定「已实装」＝该 provider 的 skills 目录下条目含 `SKILL.md`（跟随 symlink，
+  所以 store 布局与 per-agent link 都算）。目录映射与 apply 一致：全局 `~/.codex/skills/`、
+  `~/.claude/skills/`、`~/.config/opencode/skills/`；repo 级 `.agents/skills/`（codex/opencode
+  共用）与 `.claude/skills/`。
+- **mcp** 判定「已注册」：codex / opencode 只数 **agent-env managed marker 块**内的条目
+  （手工写在块外的 server 不算——那是用户自己的地盘）；claude-code 数 `mcpServers` 对象的
+  全部键（全局 `~/.claude.json` 的 `mcpServers` 由 agent-env 整体接管；repo 级读
+  `<repo>/.mcp.json`，即 `claude mcp add --scope project` 的落盘文件）。
+- **`--declared`**：把「配置声明了、但当前上下文尚未安装」的条目也列出，并给已装条目加注：
+  - `name  (not installed)`：当前 repo 选择（profiles/names 门禁 + repo agents 收窄）会装、
+    但磁盘上还没有；
+  - `name  (no active declaration)`：磁盘上有、但当前上下文的声明集不含它（残留/手工装）；
+  - `name  (wildcard source)`：来自 `skills = ["*"]` 的源（具体 skill 名经 skills CLI 的
+    lock 文件反查）。
+  与 `skills resolve` / `mcp` 门禁同一套规则：全局条目无条件、repo 级按交集、游离条目仅
+  `names` 点名、repo `agents` 只收窄 repo 级。
+- **`--no-repo`**：只看全局 scope（与 `apply --no-repo` 同义）。
+- 空节自动省略；`~/.claude/skills` 是 store symlink 时打印与 apply 相同的提示到 stderr。
 
 ### mcp
 
@@ -347,7 +390,7 @@ dry-run 脱敏：**来自 secrets.toml 的所有值出现即替换为 `***redact
 go test ./...
 ```
 
-table-driven Go 测试覆盖：manifest/repo config 校验矩阵（含 global 保留字、scope 字段拒绝）、全局条目无选择照装、repo 级无选择两域都跳过、profile 选择/交集/agents 收窄、stamp 签名与真实状态文件字节兼容、installer 命令构造、claude symlink 特例、skip-unchanged 全流程、`--prune` 矩阵（全局/repo 剪枝、手工安装保护、同名保护、dry-run 只列表、lock 缺失、force 组合、只读拒绝）、MCP `${VAR}`/脱敏、三渲染器 marker 语义、claude 保序 patch、upsert-stdin 与 apply 字节等价、aiden 命令构造、init 新建/合并/apply 透传、顶层 all-in-one 双域执行/失败聚合/flag 透传。
+table-driven Go 测试覆盖：manifest/repo config 校验矩阵（含 global 保留字、scope 字段拒绝）、全局条目无选择照装、repo 级无选择两域都跳过、profile 选择/交集/agents 收窄、stamp 签名与真实状态文件字节兼容、installer 命令构造、claude symlink 特例、skip-unchanged 全流程、`--prune` 矩阵（全局/repo 剪枝、手工安装保护、同名保护、dry-run 只列表、lock 缺失、force 组合、只读拒绝）、MCP `${VAR}`/脱敏、三渲染器 marker 语义、claude 保序 patch、upsert-stdin 与 apply 字节等价、aiden 命令构造、init 新建/合并/apply 透传、顶层 all-in-one 双域执行/失败聚合/flag 透传、`ls` 门禁矩阵（profile/name/agents 与 apply 一致、三格式 MCP 解析、wildcard lock 反查、stale/not-installed 注解、provider 过滤与别名）。
 
 ## 文件布局
 
@@ -357,6 +400,7 @@ internal/cli/                  # cobra 命令树（含顶层 apply/dry-run）
 internal/config/               # 统一配置 + secrets + repo config 解析
 internal/skills/               # skills 域
 internal/mcp/                  # MCP 域（渲染器 / claude patch / upsert-stdin）
+internal/inventory/            # ls 域：磁盘扫描 + 声明匹配（只读盘点）
 internal/repoinit/             # agent-env init
 internal/stamp/                # stamp 读写 + 签名
 internal/version/              # 版本变量（ldflags 注入）

@@ -8,12 +8,12 @@ import (
 	"strings"
 )
 
-// skillLock is the read-only view of the skills CLI lock file. agent-env never
+// SkillLock is the read-only view of the skills CLI lock file. agent-env never
 // writes it; it only reverse-maps a source to the skills it installed so prune
-// knows which directories belong to a retired source. Entries carry both the
+// and ls know which directories belong to a source. Entries carry both the
 // normalized `source` and the original `sourceUrl` (the skills CLI normalizes
 // `owner/repo` out of a URL), so matching consults both.
-type skillLock struct {
+type SkillLock struct {
 	Version int                    `json:"version"`
 	Skills  map[string]skillRecord `json:"skills"`
 }
@@ -23,33 +23,34 @@ type skillRecord struct {
 	SourceURL string `json:"sourceUrl"`
 }
 
-// lockPath returns the lock path for a scope: the repo lock lives at the repo
-// root (next to .agents/), the global lock under ~/.agents/.
-func lockPath(home, projectRoot string, global bool) string {
+// LockPath returns the skills CLI lock path for a scope: the repo lock lives
+// at the repo root (next to .agents/), the global lock under ~/.agents/.
+func LockPath(home, projectRoot string, global bool) string {
 	if global {
 		return filepath.Join(home, ".agents", ".skill-lock.json")
 	}
 	return filepath.Join(projectRoot, "skills-lock.json")
 }
 
-// readLock loads a lock file, returning nil when it is absent or unreadable.
-// A malformed lock is treated like a missing one: prune must never delete
-// directories based on a file it could not understand.
-func readLock(path string) *skillLock {
+// ReadLock loads a lock file, returning nil when it is absent or unreadable.
+// A malformed lock is treated like a missing one: callers must never act on a
+// file they could not understand.
+func ReadLock(path string) *SkillLock {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-	var l skillLock
+	var l SkillLock
 	if err := json.Unmarshal(data, &l); err != nil || l.Skills == nil {
 		return nil
 	}
 	return &l
 }
 
-// skillsFor returns the sorted skill names the lock associates with declared,
-// or nil when the lock has no matching record.
-func (l *skillLock) skillsFor(declared string) []string {
+// SkillsFor returns the sorted skill names the lock associates with declared
+// (matching either the normalized source or sourceUrl), or nil when the lock
+// has no record for it.
+func (l *SkillLock) SkillsFor(declared string) []string {
 	if l == nil {
 		return nil
 	}
@@ -91,11 +92,9 @@ func canonSource(s string) string {
 		s = s[i+3:]
 		if j := strings.IndexByte(s, '/'); j >= 0 {
 			s = s[j+1:]
-		} else {
-			return strings.ToLower(s)
 		}
 	}
-	return strings.ToLower(ownerRepo(s))
+	return strings.ToLower(s)
 }
 
 func ownerRepo(s string) string {

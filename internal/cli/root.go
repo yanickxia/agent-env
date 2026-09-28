@@ -94,6 +94,7 @@ func newRootCmd() *cobra.Command {
 		newAllCmd("dry-run", "Print skills and MCP commands without executing them"),
 		newSkillsCmd(),
 		newMCPCmd(),
+		newLsCmd(),
 		newInitCmd(),
 		newUpdateCmd(),
 		newVersionCmd(),

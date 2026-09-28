@@ -30,14 +30,14 @@ func (r *runner) pruneTargetFor() pruneTarget {
 		return pruneTarget{
 			global:     true,
 			stampScope: "user",
-			lockPath:   lockPath(r.opts.Home, r.opts.ProjectRoot, true),
+			lockPath:   LockPath(r.opts.Home, r.opts.ProjectRoot, true),
 			skillsDir:  filepath.Join(r.opts.Home, ".agents", "skills"),
 		}
 	}
 	return pruneTarget{
 		global:      false,
 		stampScope:  "project:" + r.opts.ProjectRoot,
-		lockPath:    lockPath(r.opts.Home, r.opts.ProjectRoot, false),
+		lockPath:    LockPath(r.opts.Home, r.opts.ProjectRoot, false),
 		skillsDir:   filepath.Join(r.opts.ProjectRoot, ".agents", "skills"),
 		claudeLinks: filepath.Join(r.opts.ProjectRoot, ".claude", "skills"),
 	}
@@ -98,12 +98,12 @@ func (r *runner) pruneActiveEntries(globalScope bool) []activeEntry {
 // pruneOwners maps each skill name an active entry supplies to that entry's
 // source. Declared names are authoritative; a `skills = ["*"]` entry falls back
 // to the lock, which is the only place its concrete names are recorded.
-func pruneOwners(entries []activeEntry, lock *skillLock) map[string][]string {
+func pruneOwners(entries []activeEntry, lock *SkillLock) map[string][]string {
 	owners := map[string][]string{}
 	for _, e := range entries {
 		names := e.skills
 		if e.wildcard {
-			names = lock.skillsFor(e.source)
+			names = lock.SkillsFor(e.source)
 		}
 		for _, n := range names {
 			if n == "*" {
@@ -149,7 +149,7 @@ func (r *runner) prune(mode string) error {
 		activeSet[e.source] = true
 	}
 
-	lock := readLock(target.lockPath)
+	lock := ReadLock(target.lockPath)
 	owners := pruneOwners(entries, lock)
 
 	dryRun := mode == CmdDryRun
@@ -161,7 +161,7 @@ func (r *runner) prune(mode string) error {
 		}
 		stale = append(stale, row)
 
-		skills := lock.skillsFor(row.Source)
+		skills := lock.SkillsFor(row.Source)
 		if len(skills) == 0 {
 			verb := "pruned"
 			if dryRun {
