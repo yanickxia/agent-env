@@ -122,6 +122,7 @@ agent-env skills ...                          # skills 域
 agent-env mcp ...                             # MCP 域
 agent-env ls [...]                            # 只读：按 provider 列出实装的 skills/MCP
 agent-env init PROFILE... [--name N]... [--agent A]... [--apply] [--dry-run]
+agent-env skills|mcp add NAME... [--dry-run]  # 按名单条安装（记录 + 安装，见「按名安装（add）」）
 ```
 
 顶层 `apply` / `dry-run` 只接受两域**共享**的 flags：
@@ -147,6 +148,7 @@ agent-env skills list                     # 打印 config.toml 原文
 agent-env skills profiles                 # 列出可声明的 profiles（排序去重，排除保留字 global；无则 rc=1）
 agent-env skills resolve  [--agent A]... [--profile P]...    # 只读：当前 repo 会安装的 repo 级条目
 agent-env skills status   [--agent A]... [--profile P]...    # 只读：repo 级 project stamp 状态
+agent-env skills add NAME... [--dry-run]                     # 记录 + 安装（见「按名安装（add）」）
 ```
 
 - 全局条目（profiles 含 `global`）由 chezmoi 91 钩子自动同步（全局 config 变化触发 `cd $HOME && agent-env skills apply --non-interactive --skip-unchanged`）。
@@ -223,6 +225,7 @@ agent-env mcp dry-run     [同上 flags]
 agent-env mcp list                        # 打印 config.toml 原文
 agent-env mcp profiles                    # 列出可声明的 profiles（排除 global）
 agent-env mcp upsert-stdin --agent AGENT  # stdin→stdout：插入/替换该 agent 的全局 marker 块（chezmoi modify_ 专用）
+agent-env mcp add NAME... [--dry-run]     # 记录 + 同步（见「按名安装（add）」）
 ```
 
 写入目标（幂等重新 apply；marker 块替换或整体管理，重复运行结果一致）：
@@ -263,6 +266,23 @@ agent-env init PROFILE... [--name N]... [--agent AGENT]... [--apply] [--dry-run]
 - 至少一个 PROFILE 或 `--name`；非法名与保留字 `global` 均拒绝；`--name`/`--agent` 支持逗号/重复。
 - `--dry-run` 打印路径与将写入的完整内容，不落盘。
 - `--apply` 写完后再执行 `agent-env skills apply --non-interactive --skip-unchanged`，透传其 exit code。
+
+### 按名安装（add）
+
+npm 风格的单条安装：先**记录**进 `<repo>/.agent-env.toml` 的 `names`，再**安装**（复用对应域的正常 apply）。
+
+```sh
+agent-env skills add NAME... [--dry-run]   # NAME 匹配 [[installs]] 的 name 字段
+agent-env mcp add NAME...   [--dry-run]    # NAME 匹配 [[servers]] 的 name 字段
+```
+
+- **匹配规则：只按 `name` 字段**。skills 只索引带 `name` 的 installs 条目；mcp 索引全部 servers。没有 name 字段的条目暂时不能 add（报错会提示先在全局 config 补 `name = "..."`）。
+- **语义 = 记录 + 安装**：name 解析 → 合并进 repo 配置 `names`（文件不存在则创建；已有 profiles/names/agents/mode/vars 原样保留、去重保序、原子写）→ 跑 `skills apply --non-interactive --skip-unchanged` / `mcp apply --non-interactive`。新条目装上、已装的靠 stamp 跳过；重复 add 幂等（names 不新增、stamp skip、不重跑安装）。
+- **多 name 一次传入**（支持逗号分隔）：`add a b c`。**先全部解析再变更**——任一未知 name 整体失败（rc=1），报错列出当前可用 name 清单，零副作用。
+- **仅 repo 内可用**：非 git repo cwd（或 `--no-repo`）→ rc=1 并提示全局条目用 `apply --no-repo`。
+- **global 条目特例**：profiles 含 `global` 的条目本就全局生效——打印 `note: <name> is global, installs everywhere; nothing to record`，不写入 names（也不创建空配置），安装照常执行。
+- **`--dry-run`**：打印将写入的 `.agent-env.toml` 完整内容与安装动作预览，零落盘、零安装、零 stamp。
+- 安装失败**不回滚记录**（与 apply 语义一致：npx 失败只报 stderr、不写 stamp，下次 apply 重试）。
 
 ## `.agent-env.toml`
 

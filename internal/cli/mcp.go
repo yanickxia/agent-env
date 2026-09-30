@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/yanickxia/agent-env/internal/add"
 	"github.com/yanickxia/agent-env/internal/config"
 	"github.com/yanickxia/agent-env/internal/mcp"
 )
@@ -71,8 +72,60 @@ func newMCPCmd() *cobra.Command {
 		newMCPActionCmd("dry-run", "Print the commands and config blocks without writing them", mcp.CmdDryRun),
 		newMCPActionCmd("list", "Print the current config", mcp.CmdList),
 		newMCPActionCmd("profiles", "Print the distinct profiles declared by config servers (sorted)", mcp.CmdProfiles),
+		newMCPAddCmd(),
 		newMCPUpsertStdinCmd(),
 	)
+	return c
+}
+
+func newMCPAddCmd() *cobra.Command {
+	var dryRun, noRepo bool
+	c := &cobra.Command{
+		Use:   "add NAME...",
+		Short: "Record named MCP servers in .agent-env.toml and sync them",
+		Long: "Resolve each NAME against the global config's [[servers]] entries (by the\n" +
+			"name field), record it in <repo>/.agent-env.toml's names list, then run\n" +
+			"agent-env mcp apply --non-interactive so the server is synced into the\n" +
+			"agent configs (npm install --save semantics).\n\n" +
+			"All names are resolved before anything is modified: an unknown name fails\n" +
+			"the whole command without side effects. Servers whose profiles contain the\n" +
+			"reserved \"global\" keyword install everywhere already, so they are noted\n" +
+			"but not recorded. --dry-run prints the planned config change and writes\n" +
+			"without touching anything.\n\n" +
+			"add requires a repo context: outside a repository (or with --no-repo) it\n" +
+			"fails; use `agent-env mcp apply --no-repo` for global-only installs.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mo := resolveMCPOptions()
+			getenv := os.Getenv
+			wd := mo.WorkDir
+			inRepo := config.InGitRepo(wd) ||
+				getenv("AGENT_ENV_REPO_CONFIG") != "" ||
+				getenv("AGENT_SKILLS_REPO_CONFIG") != ""
+			opts := add.Options{
+				Domain:         add.DomainMCP,
+				ManifestPath:   mo.ManifestPath,
+				SecretsPath:    mo.SecretsPath,
+				RepoConfigPath: mo.RepoConfigPath,
+				ProjectRoot:    mo.ProjectRoot,
+				StartDir:       mo.WorkDir,
+				Home:           mo.Home,
+				ClaudeJSON:     mo.ClaudeJSON,
+				Stdout:         os.Stdout,
+				Stderr:         os.Stderr,
+				Stdin:          os.Stdin,
+				LookupEnv:      getenv,
+				InRepo:         inRepo,
+			}
+			fl := add.Filters{Names: flattenComma(args), DryRun: dryRun, NoRepo: noRepo}
+			if err := add.Run(opts, fl); err != nil {
+				return &ExitError{Code: 1, Msg: err.Error()}
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "print the config change and config writes without writing or syncing")
+	c.Flags().BoolVar(&noRepo, "no-repo", false, "rejected: add records into a repo config and needs a repo context")
 	return c
 }
 

@@ -82,6 +82,19 @@ func ProjectRoot(dir string) string {
 	return dir
 }
 
+// InGitRepo reports whether dir is inside a git work tree. Unlike
+// ProjectRoot it distinguishes "git failed" from "root == dir", which the
+// repo-only add commands need to reject a non-repo cwd.
+func InGitRepo(dir string) bool {
+	if _, err := exec.LookPath("git"); err != nil {
+		return false
+	}
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
 // ExpandSource turns a leading "~/" into the user's home directory, matching
 // the zsh expand_source helper.
 func ExpandSource(home, source string) string {

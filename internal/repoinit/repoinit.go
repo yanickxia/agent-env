@@ -503,6 +503,48 @@ func fileExists(path string) bool {
 	return err == nil && !fi.IsDir()
 }
 
+// MergeNames reads the repo config at path (when present), merges names into
+// its names list — existing entries first, new ones de-duplicated and appended
+// in order — and preserves profiles/agents/mode/vars exactly like `init` does.
+// It renders the full file content without writing anything; callers decide
+// whether to persist (see WriteAtomic). existed reports whether the config was
+// already on disk; changed reports whether the names list actually grew.
+func MergeNames(path string, names []string) (content string, finalNames []string, existed bool, changed bool, err error) {
+	var existing *existingConfig
+	if fileExists(path) {
+		parsed, perr := parseExisting(path)
+		if perr != nil {
+			return "", nil, true, false, perr
+		}
+		existing = parsed
+		existed = true
+	}
+
+	final := []string{}
+	profiles := []string{}
+	agents := []string{}
+	mode := ""
+	vars := map[string]any{}
+	if existing != nil {
+		final = append(final, existing.names...)
+		profiles = existing.profiles
+		agents = existing.agents
+		mode = existing.mode
+		vars = existing.vars
+	}
+	before := strings.Join(final, "\x00")
+	final = appendUniqueItems(final, names)
+	changed = strings.Join(final, "\x00") != before
+
+	return renderContent(profiles, final, agents, mode, vars), final, existed, changed, nil
+}
+
+// WriteAtomic replaces path with content via a temp file in the same
+// directory plus rename (the same mechanism `init` uses).
+func WriteAtomic(path, content string) error {
+	return atomicWrite(path, content)
+}
+
 func printCommand(w io.Writer, args ...string) {
 	for _, a := range args {
 		fmt.Fprintf(w, "%s ", zshQuote(a))
