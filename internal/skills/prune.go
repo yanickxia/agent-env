@@ -57,11 +57,12 @@ type activeEntry struct {
 // narrowing filters: those only restrict what gets (re)installed, they must
 // never make a declared entry look retired and cause its store to be deleted.
 // Global entries are always active in a global run; repo-level entries are
-// gated by the effective profiles/names and the repo config's agents.
-func (r *runner) pruneActiveEntries(globalScope bool) []activeEntry {
-	entries, err := config.ParseManifest(r.opts.ManifestPath)
+// gated by the effective profiles/names and the repo config's agents. Inline
+// project entries are active without selectors, exactly as in apply.
+func (r *runner) pruneActiveEntries(globalScope bool) ([]activeEntry, error) {
+	entries, err := config.LoadProjectInstalls(r.opts.ManifestPath, r.repo)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	active := []activeEntry{}
 	for _, entry := range entries {
@@ -71,7 +72,7 @@ func (r *runner) pruneActiveEntries(globalScope bool) []activeEntry {
 		if !entry.Global {
 			named := entry.Name != "" && stringInList(r.effectiveNames, entry.Name)
 			profiled := len(entry.Profiles) > 0 && profilesIntersect(entry.ProfilesRaw, r.effectiveProf)
-			if !named && !profiled {
+			if entry.RepoPath == "" && !named && !profiled {
 				continue
 			}
 			// Repo config agents narrow repo-level entries independently of
@@ -92,7 +93,7 @@ func (r *runner) pruneActiveEntries(globalScope bool) []activeEntry {
 		active = append(active, activeEntry{source: source, skills: names, wildcard: wildcard})
 	}
 	sort.Slice(active, func(i, j int) bool { return active[i].source < active[j].source })
-	return active
+	return active, nil
 }
 
 // pruneOwners maps each skill name an active entry supplies to that entry's
@@ -143,7 +144,10 @@ func (r *runner) prune(mode string) error {
 		return nil
 	}
 
-	entries := r.pruneActiveEntries(target.global)
+	entries, err := r.pruneActiveEntries(target.global)
+	if err != nil {
+		return err
+	}
 	activeSet := make(map[string]bool, len(entries))
 	for _, e := range entries {
 		activeSet[e.source] = true

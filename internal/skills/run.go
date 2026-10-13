@@ -127,7 +127,7 @@ func (r *runner) resolveStatusGating() error {
 }
 
 func (r *runner) processManifest(mode string) error {
-	entries, err := config.ParseManifest(r.opts.ManifestPath)
+	entries, err := config.LoadProjectInstalls(r.opts.ManifestPath, r.repo)
 	if err != nil {
 		return err
 	}
@@ -143,11 +143,11 @@ func (r *runner) processManifest(mode string) error {
 		entryCount++
 		source := config.ExpandSource(r.opts.Home, strings.TrimSpace(entry.Source))
 
-		if !entry.Global {
+		if !entry.Global && entry.RepoPath == "" {
 			named := entry.Name != "" && stringInList(r.effectiveNames, entry.Name)
 			profiled := len(entry.Profiles) > 0 && profilesIntersect(entry.ProfilesRaw, r.effectiveProf)
 			if !named && !profiled {
-				if !r.f.NoRepo && r.effectiveProf == "" && len(r.effectiveNames) == 0 {
+				if !r.f.NoRepo && r.repoMissing && r.effectiveProf == "" && len(r.effectiveNames) == 0 {
 					repoLevelSkips++
 				}
 				continue
@@ -318,7 +318,7 @@ func (r *runner) filterDetail() string {
 }
 
 func (r *runner) resolveManifest(mode string) error {
-	entries, err := config.ParseManifest(r.opts.ManifestPath)
+	entries, err := config.LoadProjectInstalls(r.opts.ManifestPath, r.repo)
 	if err != nil {
 		return err
 	}
@@ -352,7 +352,7 @@ func (r *runner) resolveManifest(mode string) error {
 		}
 		named := entry.Name != "" && stringInList(r.effectiveNames, entry.Name)
 		profiled := len(entry.Profiles) > 0 && profilesIntersect(entry.ProfilesRaw, r.effectiveProf)
-		if !named && !profiled {
+		if entry.RepoPath == "" && !named && !profiled {
 			continue
 		}
 		resolvedAgents, ok := r.selectEntryAgents(false, entry.AgentsRaw)
@@ -366,6 +366,9 @@ func (r *runner) resolveManifest(mode string) error {
 		for _, item := range splitTrimNonEmpty(skillsRaw) {
 			fmt.Fprintf(r.out, "  %s\n", item)
 			fmt.Fprintf(r.out, "    source: %s\n", source)
+			if entry.RepoPath != "" {
+				fmt.Fprintf(r.out, "    config: %s\n", entry.RepoPath)
+			}
 			if entry.Name != "" {
 				fmt.Fprintf(r.out, "    name: %s\n", entry.Name)
 			}

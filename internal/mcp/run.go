@@ -67,12 +67,13 @@ type runner struct {
 	secrets map[string]string
 	values  []string // secret values, for redaction
 
-	servers        []config.Server
-	repo           *config.RepoConfig
-	repoLayers     []string
-	effectiveProf  string
-	effectiveList  []string
-	effectiveNames []string
+	servers                 []config.Server
+	globalServersConfigured bool
+	repo                    *config.RepoConfig
+	repoLayers              []string
+	effectiveProf           string
+	effectiveList           []string
+	effectiveNames          []string
 }
 
 func errUnsupportedUserAgent(agent string) error {
@@ -223,11 +224,12 @@ func (r *runner) loadServers() error {
 	if err := r.loadSecrets(); err != nil {
 		return err
 	}
-	servers, err := config.ParseServers(r.opts.ManifestPath, r.resolveSecret)
+	servers, configured, err := config.LoadProjectServers(r.opts.ManifestPath, r.repo, r.resolveSecret)
 	if err != nil {
 		return err
 	}
 	r.servers = servers
+	r.globalServersConfigured = configured
 	return nil
 }
 
@@ -251,7 +253,7 @@ func (r *runner) loadRepo() error {
 	}
 	cfg, layers, found, err := config.LoadRepoSelection(
 		explicit, start, r.getenv,
-		"server definitions belong in the global manifest")
+		"use [[installs]] / [[servers]] for project-only definitions; hooks belong in the global manifest")
 	if err != nil {
 		return err
 	}
@@ -414,16 +416,16 @@ func (r *runner) cmdSync() error {
 	if r.f.Command == CmdApply && !r.f.NonInteractive {
 		return fmt.Errorf("%s: interactive selection is not supported yet; pass --non-interactive or an explicit filter (--agent/--name/--profile)", config.Prog)
 	}
+	if err := r.loadRepo(); err != nil {
+		return err
+	}
 	if err := r.loadServers(); err != nil {
 		return err
 	}
-	if len(r.f.Agents) > 0 {
+	if len(r.f.Agents) > 0 && (len(r.servers) > 0 || !r.repo.HasInlineEntries()) {
 		if err := r.validateAgentFilters(); err != nil {
 			return err
 		}
-	}
-	if err := r.loadRepo(); err != nil {
-		return err
 	}
 	r.computeEffectiveProfiles()
 	return r.processManifest(r.f.Command)
@@ -498,11 +500,11 @@ func (r *runner) processManifest(mode string) error {
 		if !r.nameMatches(row.Name) {
 			continue
 		}
-		if !row.Global {
+		if !row.Global && row.RepoPath == "" {
 			named := row.Name != "" && containsString(r.effectiveNames, row.Name)
 			profiled := len(row.Profiles) > 0 && profilesIntersect(row.Profiles, r.effectiveProf)
 			if !named && !profiled {
-				if !r.f.NoRepo && r.effectiveProf == "" && len(r.effectiveNames) == 0 {
+				if !r.f.NoRepo && r.repo == nil && r.effectiveProf == "" && len(r.effectiveNames) == 0 {
 					repoLevelSkips++
 				}
 				continue
@@ -632,6 +634,9 @@ func (r *runner) processManifest(mode string) error {
 	// cleaned up. Manifest-level protection lives in the parser.
 	if entryCount == 0 {
 		fmt.Fprintf(r.errw, "%s: no active entries; nothing to install\n", config.Prog)
+	}
+	if !r.globalServersConfigured {
+		return nil
 	}
 
 	// User-scope writers always run so an empty selection cleans up stale

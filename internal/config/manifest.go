@@ -78,8 +78,12 @@ type PostInstall struct {
 
 // Install is a fully validated [[installs]] entry. Global means the entry's
 // profiles contain the reserved keyword "global" (formerly scope = "user");
-// otherwise the entry is repo-level and gated by the profile selection.
+// otherwise the entry is repo-level, selected by profile/name or enabled
+// automatically when declared inline (RepoPath is non-empty).
 type Install struct {
+	// RepoPath is set only for inline entries from a .agent-env.toml layer.
+	RepoPath string
+
 	Source    string
 	Name      string
 	AgentsRaw string
@@ -102,9 +106,16 @@ type Install struct {
 
 // ParseManifest reads and validates the unified config's [[installs]] table.
 func ParseManifest(path string) ([]Install, error) {
+	return parseManifest(path, false)
+}
+
+func parseManifest(path string, optional bool) ([]Install, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if optional {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("%s: manifest not found: %s", Prog, path)
 		}
 		return nil, fmt.Errorf("%s: cannot read manifest %s: %v", Prog, path, err)
@@ -117,8 +128,15 @@ func ParseManifest(path string) ([]Install, error) {
 
 	installsVal, ok := raw["installs"]
 	if !ok {
+		if optional {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("%s: manifest must contain an \"installs\" array: %s", Prog, path)
 	}
+	return parseInstalls(installsVal, path)
+}
+
+func parseInstalls(installsVal any, path string) ([]Install, error) {
 	entries := toEntryList(installsVal)
 	if entries == nil {
 		return nil, fmt.Errorf("%s: manifest must contain an \"installs\" array: %s", Prog, path)

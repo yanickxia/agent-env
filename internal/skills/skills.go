@@ -196,7 +196,7 @@ func (r *runner) loadRepo() error {
 	}
 	cfg, layers, found, err := config.LoadRepoSelection(
 		explicit, start, os.Getenv,
-		"install details and hooks belong in the global manifest")
+		"use [[installs]] / [[servers]] for project-only definitions; hooks belong in the global manifest")
 	if err != nil {
 		return err
 	}

@@ -8,7 +8,7 @@
 一个二进制、两个域、一份配置：
 
 - 全局配置 `config.toml`（`[[installs]]` + `[[servers]]`）由 chezmoi 直接管理为真实文件 `~/.config/agent-env/config.toml`；本 repo 只保留样例 `config.example.toml`。
-- 每个 repo 用 `.agent-env.toml` 声明自己启用的 profiles / agents。
+- 每个 repo 用 `.agent-env.toml` 声明自己启用的 profiles / names / agents，也可以直接定义项目专属的 skills / MCP。
 - `config.toml` 里的 `${VAR}` 从 `~/.config/agent-env/secrets.toml`（chezmoi private，不进 repo）或环境变量解析；dry-run 对 secrets 值脱敏。
 
 ## 安装
@@ -152,7 +152,7 @@ agent-env skills add NAME... [--dry-run]                     # 记录 + 安装�
 ```
 
 - 全局条目（profiles 含 `global`）由 chezmoi 91 钩子自动同步（全局 config 变化触发 `cd $HOME && agent-env skills apply --non-interactive --skip-unchanged`）。
-- repo 级条目必须显式提供选择：没有 `.agent-env.toml` 也没有 `--profile` 时跳过并提示；有选择时按 `条目 profiles ∩ 选择 ≠ ∅` 门禁。
+- 全局清单里的 repo 级条目需由 profiles 或 names 选择；没有 `.agent-env.toml` 也没有 `--profile` 时跳过并提示。直接写在 `.agent-env.toml` 的内联条目则自动启用，无需额外选择。
 - 全局条目的 `[user]` stamp 在**每次** apply/dry-run 都参与判定：匹配即跳过（打印 `# skip (unchanged): ... [user]`），未过滤的完整 apply 安装成功后写入，因此裸 `agent-env apply` 不会重跑已同步的全局条目。`--skip-unchanged` 现在只额外控制 **repo 级条目**的 `project` stamp（传了才读写），且只用于完整运行（与 `--agent`/`--skill` 组合报错；dry-run 永不写 stamp）。被 `--agent`/`--skill`/`--skills` 收窄的运行仍用全局 stamp 判定跳过，但安装后不写 stamp（签名描述声明的形状，而非收窄后的实际安装集）。
 - `--no-repo` 只用于 apply/dry-run：跳过 repo 发现、只装全局条目、静默排除 repo 级条目，且与 `--profile` 互斥；`list`/`profiles`/`resolve`/`status` 拒绝该 flag。chezmoi 91 钩子从 `$HOME` 运行、没有 repo 上下文，可用它显式声明这一点。
 - **`--force` 中断恢复**：强制重装所有活跃条目，忽略 stamp 判定——用于“安装中途退出导致 store 与 stamp 不一致”的自愈（例如 store 缺文件但 state.tsv 仍标记已装）。`--force` 优先于 `--skip-unchanged`（同传时 force 生效，不报错），可与 `--skill`/`--agent` 组合只重装子集；重装成功后写回 stamp，之后普通 apply 恢复 skip。MCP 无 stamp、天然幂等，`--force` 对其为 no-op。
@@ -262,7 +262,7 @@ agent-env init PROFILE... [--name N]... [--agent AGENT]... [--apply] [--dry-run]
 
 创建或合并 `<git toplevel>/.agent-env.toml`（fallback `$PWD`）：
 
-- 已存在时旧 profiles/agents 在前、CLI 新值去重追加；`mode`/`[vars]` 原样保留；原子写（同目录 temp+rename）；注释不保留。
+- 已存在时旧 profiles/agents 在前、CLI 新值去重追加；`mode`/`[vars]`、内联 `[[installs]]` / `[[servers]]` 的内容保留（相对路径与 `${VAR}` 不展开）；原子写（同目录 temp+rename）；注释与排版不保留。
 - 至少一个 PROFILE 或 `--name`；非法名与保留字 `global` 均拒绝；`--name`/`--agent` 支持逗号/重复。
 - `--dry-run` 打印路径与将写入的完整内容，不落盘。
 - `--apply` 写完后再执行 `agent-env skills apply --non-interactive --skip-unchanged`，透传其 exit code。
@@ -286,7 +286,7 @@ agent-env mcp add NAME...   [--dry-run]    # NAME 匹配 [[servers]] 的 name �
 
 ## `.agent-env.toml`
 
-repo 根目录的声明文件（建议提交；只做选择，不能执行命令）：
+repo 根目录的声明文件，既可以引用全局清单，也可以直接定义项目专属条目：
 
 ```toml
 profiles = ["base", "ark-mlops"]   # 可选，kebab-case 字符串数组；不可写 global
@@ -297,7 +297,49 @@ mode     = "symlink"               # 可选，symlink | copy
 team = "ark"
 ```
 
-只读命令与 apply 都接受：`--profile` 覆盖 repo 配置的 profiles（临时，不写回）。缺少文件 = 无选择，不报错；`profiles`/`names` 两者皆无 = 无选择（合法）；文件非法（非 kebab、含 `global`、未知 key）→ rc=1。
+只读命令与 apply 都接受：`--profile` 覆盖 repo 配置的 profiles（临时，不写回）。缺少文件 = 无选择，不报错；`profiles`/`names` 两者皆无也合法，此时只启用全局条目和当前上下文的内联条目；文件非法（非 kebab、含 `global`、未知 key）→ rc=1。
+
+### 目录专属 skills / MCP（内联定义）
+
+不必为了只在一个项目使用的工具修改 `~/.config/agent-env/config.toml`。直接在该项目的 `.agent-env.toml` 里复用全局清单的 `[[installs]]`（skills）和 `[[servers]]`（MCP）语法：
+
+```toml
+# profiles / names 仍可与内联定义混用，也可以完全省略。
+agents = ["codex", "opencode"]
+
+[[installs]]
+name = "project-skills"       # 可选；命名后可以在子目录同名覆盖
+source = "./skills"           # 也支持 "owner/repo"、git URL、~/ 路径
+skills = ["*"]
+# agents 未填时继承上面的 agents；也可以逐条指定。
+
+[[servers]]
+name = "project-api"
+type = "streamable-http"
+url = "http://127.0.0.1:3000/mcp"
+
+# stdio MCP 示例：
+[[servers]]
+name = "project-tools"
+command = "./bin/project-mcp"
+args = ["--stdio"]
+env = { API_KEY = "${PROJECT_API_KEY}" }
+```
+
+```sh
+agent-env dry-run                     # 预览 skills 安装命令与 MCP 配置
+agent-env apply --non-interactive      # 安装到当前项目
+agent-env skills resolve              # 包含内联 skills 及其定义文件路径
+```
+
+- **自动启用，限定项目级**：内联条目不需要再被 `names` / `profiles` 选中；条目上的非 global `profiles` 仅作分类，不参与选择门禁。`--profile` 不会隐藏它们，`--agent` / `--skill` / MCP `--name` 仍会过滤；`--no-repo` 完全忽略目录配置。
+- **沿用目录继承**：当前目录及祖先目录的定义参与合并，不会影响兄弟目录；安装目标仍是 git toplevel（非 git 目录则为 cwd），不是按每条定义所在目录分别安装。在同一个 git repo 的子目录执行，也仍写到该 repo 根目录。
+- **同名覆盖**：子层 > 父层 > 全局清单中的同名 repo 级条目，整条替换，不逐字段合并。skills 未填写 `name` 的条目按顺序累加。同一文件中的重复 install name / server name 报错。全局（`profiles = ["global"]`）条目不受覆盖，仍单独同步。
+- **agents / mode 默认值**：内联条目的 `agents` 未填或为空时继承合并后的顶层 `agents`；skills 的 `mode` 未填时继承顶层 `mode`。请在顶层或条目上声明目标 agents。已声明 agents 的条目仍受顶层 agents 收窄。
+- **与现有命令兼容**：`ls --declared` 会展示内联条目；skills 的 `--force` / `--prune` 将它们视为项目级声明，不会误清理仍在使用的内联 skills。`init` 和按名称 `add` 更新选择器时都会保留内联定义（`add NAME` 本身仍从全局清单查找名称）。
+- **路径与密钥**：skills 的 `source`、MCP 的 `command` 若以 `./` / `../` 开头（或是 `.` / `..`），相对于定义它的 `.agent-env.toml` 解析；MCP `args` 保留原样。`${VAR}` 在 MCP `url` / `args` / `env` / `headers` 中沿用 secrets.toml → 环境变量的解析规则。不要把明文 token 提交到仓库。
+- **独立使用**：有内联定义时，可以没有全局 config.toml，也可以缺少全局清单中的某一个域；顶层 apply/dry-run 都能运行。若没有全局 `servers` 表，不会改动已有的用户级 MCP 配置；显式的全局 `servers = []` 则仍表示清理全局托管配置。`list` / `profiles` / `mcp upsert-stdin` 仍只读取全局清单。
+- **安全边界**：目录配置禁止 `profiles = ["global"]`、`scope` 和 `post_install` hook；但内联 skills 来源和 MCP 命令本身需要信任。执行 apply 前应审查仓库及祖先目录的配置，建议先 dry-run。
 
 ## 层级配置（mise 式发现）
 
@@ -318,9 +360,11 @@ team = "ark"
 | 字段 | 规则 |
 |---|---|
 | `profiles` | **并集**，就近优先去重保序（父层给公共选择，子层追加特有） |
+| `names` | 并集，就近优先去重保序 |
 | `agents` | **就近声明胜出**；都没声明 → 空（用条目自身 agents） |
 | `mode` | 就近声明胜出 |
 | `vars` | 按 key 合并，就近覆盖 |
+| `installs` / `servers` | 同名条目就近整条覆盖；未命名的 installs 累加；自动启用且仅项目级 |
 
 有效 profiles（去重排序后）进 stamp 签名：父层配置变化会触发一次重装，属预期。`resolve`/`status` 会先列出发现的配置层（就近在前）与合并后的 profiles/agents；`init` 仍只写/合并 git toplevel（fallback cwd）那一层文件，不跨层合并。
 
@@ -352,7 +396,7 @@ names    = ["playwright"]       # 个体点名（越过分组）
 
 ## 统一配置、secrets 与脱敏
 
-`config.toml` 一个文件两个顶层表：`[[installs]]`（skills）与 `[[servers]]`（MCP）；两个域各取所需、互相忽略。关键字段：
+`config.toml` 一个文件两个顶层表：`[[installs]]`（skills）与 `[[servers]]`（MCP）；两个域各取所需、互相忽略。`.agent-env.toml` 的内联定义复用这些字段，但禁止 `global`、`scope` 与 `post_install`，并校验两个域的定义。关键字段：
 
 - `[[installs]]`：`source`(必填)、`name`(可选，kebab-case，跨 installs 唯一；供 repo `names` 点名)、`agents`、`skills`（`["*"]`=全部）、`profiles`(可选；缺省/空 = 游离)、`mode`、`post_install`、`installer`（仅 `skills`）、`env`。
 - `[[servers]]`：`name`(必填)、`type`（`stdio`/`streamable-http`，另兼容 `sse`）、`command`、`args`、`url`、`env`、`headers`、`env_vars`、`bearer_token_env_var`、`profiles`(可选；缺省/空 = 游离)、`startup_timeout_sec`。

@@ -81,11 +81,11 @@ func Run(opts Options, f Filters) error {
 	}
 	eff, effNames := effectiveSelection(repo, hasRepo)
 
-	entries, err := config.ParseManifest(opts.ManifestPath)
+	entries, err := config.LoadProjectInstalls(opts.ManifestPath, repo)
 	if err != nil {
 		return err
 	}
-	manifestServers, err := manifestServerEntries(opts)
+	manifestServers, err := manifestServerEntries(opts, repo)
 	if err != nil {
 		return err
 	}
@@ -149,8 +149,8 @@ func contains(list []string, want string) bool {
 // never fails on an unresolved ${VAR} and never needs secrets.toml. Unlike
 // the mcp domain, a config without a [[servers]] table is fine: ls is a
 // cross-domain view, a skills-only config must still list.
-func manifestServerEntries(opts Options) ([]config.Server, error) {
-	servers, err := config.ParseServers(opts.ManifestPath, func(string) string { return "" })
+func manifestServerEntries(opts Options, repo *config.RepoConfig) ([]config.Server, error) {
+	servers, _, err := config.LoadProjectServers(opts.ManifestPath, repo, func(string) string { return "" })
 	if err != nil {
 		if strings.Contains(err.Error(), "must contain a \"servers\" array") {
 			return nil, nil
@@ -176,7 +176,7 @@ func loadRepoSelection(opts Options, noRepo bool) (*config.RepoConfig, []string,
 	}
 	return config.LoadRepoSelection(
 		explicit, start, opts.LookupEnv,
-		"install details and hooks belong in the global manifest")
+		"use [[installs]] / [[servers]] for project-only definitions; hooks belong in the global manifest")
 }
 
 // --- per-provider rendering --------------------------------------------------
@@ -369,7 +369,7 @@ func (r *lsRunner) declaredFor(provider string, global bool) ([]skillDecl, []str
 		if !global {
 			named := entry.Name != "" && contains(r.effNames, entry.Name)
 			profiled := len(entry.Profiles) > 0 && profilesIntersect(entry.ProfilesRaw, r.eff)
-			if !named && !profiled {
+			if entry.RepoPath == "" && !named && !profiled {
 				continue
 			}
 			if r.repo != nil && len(r.repo.Agents) > 0 && !agentsIntersectRaw(entry.AgentsRaw, r.repo.Agents) {
@@ -405,7 +405,7 @@ func (r *lsRunner) declaredFor(provider string, global bool) ([]skillDecl, []str
 		if !global {
 			named := s.Name != "" && contains(r.effNames, s.Name)
 			profiled := len(s.Profiles) > 0 && profilesIntersect(strings.Join(s.Profiles, ","), r.eff)
-			if !named && !profiled {
+			if s.RepoPath == "" && !named && !profiled {
 				continue
 			}
 		}

@@ -17,8 +17,11 @@ type KV struct {
 
 // Server is one normalized [[servers]] entry. Global means the entry's
 // profiles contain the reserved keyword "global" (formerly scope = "user");
-// otherwise it is repo-level and gated by the profile selection.
+// otherwise it is repo-level, selected by profile/name or enabled
+// automatically when declared inline (RepoPath is non-empty).
 type Server struct {
+	// RepoPath is set only for inline entries from a .agent-env.toml layer.
+	RepoPath          string
 	Name              string
 	Type              string
 	Command           string
@@ -41,9 +44,18 @@ type SecretResolver func(key string) string
 // ParseServers reads and validates the unified config's [[servers]] table,
 // expanding ${VAR} placeholders in url/args/env/headers at parse time.
 func ParseServers(path string, resolve SecretResolver) ([]Server, error) {
+	return parseServers(path, resolve, false)
+}
+
+// In optional mode, an absent file/table returns nil; an explicitly empty
+// servers array returns a non-nil slice so user-config cleanup stays explicit.
+func parseServers(path string, resolve SecretResolver, optional bool) ([]Server, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if optional {
+				return nil, nil
+			}
 			return nil, fmt.Errorf("%s: manifest not found: %s", Prog, path)
 		}
 		return nil, fmt.Errorf("%s: cannot read manifest %s: %v", Prog, path, err)
@@ -57,8 +69,15 @@ func ParseServers(path string, resolve SecretResolver) ([]Server, error) {
 
 	serversVal, ok := raw["servers"]
 	if !ok {
+		if optional {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("%s: manifest must contain a \"servers\" array: %s", Prog, path)
 	}
+	return parseServerEntries(serversVal, path, md, resolve)
+}
+
+func parseServerEntries(serversVal any, path string, md toml.MetaData, resolve SecretResolver) ([]Server, error) {
 	entries, ok := toAnyList(serversVal)
 	if !ok {
 		return nil, fmt.Errorf("%s: manifest must contain a \"servers\" array: %s", Prog, path)
@@ -325,6 +344,11 @@ func expandKV(items []KV, resolve SecretResolver) []KV {
 // expandPlaceholders mirrors the zsh/python loop: substitute ${VAR} until no
 // unclosed placeholder remains. Missing vars resolve to "" silently.
 func expandPlaceholders(value string, resolve SecretResolver) string {
+	// Repo layers are validated before the MCP domain loads secrets. Keep
+	// placeholders intact until the effective project entries are selected.
+	if resolve == nil {
+		return value
+	}
 	s := value
 	for strings.Contains(s, "${") {
 		pre, rest, _ := strings.Cut(s, "${")

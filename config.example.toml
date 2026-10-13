@@ -7,11 +7,16 @@
 #   [[installs]]  skills 安装清单
 #   [[servers]]   MCP server 清单
 #
-# 每个条目的 profiles 必填非空，并决定层级：
+# 项目专属条目也可直接写入该项目的 .agent-env.toml，复用上述两个表，
+# 无需 profiles/names 选择，自动按项目级安装；agents 可继承顶层 agents。
+# 目录内联定义禁止 global、scope、post_install；具体例子见 README。
+#
+# 全局清单中每个条目的 profiles 可选，并决定层级：
 #   profiles = ["global"]       全局条目：无条件安装（原 scope = "user"）；
 #                               可与其他 tag 混写，如 ["global", "base"]。
 #   profiles = ["base", ...]    repo 级条目：受 .agent-env.toml / --profile
 #                               的选择门禁（交集非空才安装）。
+#   不填 profiles / []          游离条目：通过 .agent-env.toml 的 names 点名。
 #   "global" 是保留关键字，不能出现在 .agent-env.toml 或 --profile 中。
 #
 # secrets 不写在本文件里（放在 ~/.config/agent-env/secrets.toml，chezmoi private）。

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -163,7 +164,7 @@ func Run(opts Options, f Filters) error {
 	// real repo config.
 	applyRepoConfig := opts.RepoConfigPath
 	if f.DryRun && len(persist) > 0 {
-		staged, err := stageRepoConfig(mergedContent)
+		staged, err := stageRepoConfig(mergedContent, repoConfigPath)
 		if err != nil {
 			return err
 		}
@@ -186,8 +187,15 @@ func Run(opts Options, f Filters) error {
 
 // stageRepoConfig writes content to a throwaway file so a --dry-run apply can
 // resolve the planned names against it.
-func stageRepoConfig(content string) (string, error) {
-	tmp, err := os.CreateTemp("", "agent-env-add-dry-run-*.toml")
+func stageRepoConfig(content, repoConfigPath string) (string, error) {
+	// Keep inline ./source and ./command paths relative to the original
+	// config. A missing parent means there was no existing inline config;
+	// use the system temp directory rather than creating repo directories.
+	dir := filepath.Dir(repoConfigPath)
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		dir = ""
+	}
+	tmp, err := os.CreateTemp(dir, ".agent-env-add-dry-run-*.toml")
 	if err != nil {
 		return "", fmt.Errorf("%s: add: cannot stage the dry-run repo config: %v", config.Prog, err)
 	}

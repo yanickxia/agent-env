@@ -1,5 +1,5 @@
 // Package repoinit implements `agent-env init`: create or merge the per-repo
-// .agent-env.toml (profiles/agents selection only), then optionally run the
+// .agent-env.toml (preserving inline definitions), then optionally run the
 // project-scope skills apply. Behaviour mirrors the retired zsh
 // agent-skills-init script.
 package repoinit
@@ -116,7 +116,10 @@ func Run(opts Options, f Filters) error {
 	finalNames = appendUniqueItems(finalNames, names)
 	finalAgents = appendUniqueItems(finalAgents, agents)
 
-	content := renderContent(finalProfiles, finalNames, finalAgents, mode, vars)
+	content, err := renderMerged(configPath, existing, finalProfiles, finalNames, finalAgents, mode, vars)
+	if err != nil {
+		return err
+	}
 
 	if f.DryRun {
 		fmt.Fprintf(opts.Stdout, "would write %s\n", configPath)
@@ -187,11 +190,13 @@ func syncBin(opts Options) (string, error) {
 // --- existing config parsing -------------------------------------------------
 
 type existingConfig struct {
-	profiles []string
-	names    []string
-	agents   []string
-	mode     string
-	vars     map[string]any
+	profiles       []string
+	names          []string
+	agents         []string
+	agentsDeclared bool
+	mode           string
+	vars           map[string]any
+	inline         map[string]any
 }
 
 func parseExisting(path string) (*existingConfig, error) {
@@ -204,7 +209,7 @@ func parseExisting(path string) (*existingConfig, error) {
 		return nil, fmt.Errorf("%s: invalid TOML in repo config: %s: %v", config.Prog, path, err)
 	}
 
-	allowed := map[string]bool{"profiles": true, "names": true, "agents": true, "vars": true, "mode": true}
+	allowed := map[string]bool{"profiles": true, "names": true, "agents": true, "vars": true, "mode": true, "installs": true, "servers": true}
 	unknown := []string{}
 	for k := range raw {
 		if !allowed[k] {
@@ -213,11 +218,21 @@ func parseExisting(path string) (*existingConfig, error) {
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return nil, fmt.Errorf("%s: repo config key(s) not allowed: %s in %s; repo config may only declare profiles/names/agents/vars/mode (installation details and hooks such as post_install/source/skills/scope are not permitted)",
+		return nil, fmt.Errorf("%s: repo config key(s) not allowed: %s in %s; repo config may only declare profiles/names/agents/vars/mode/installs/servers (post_install hooks and scope are not permitted)",
 			config.Prog, strings.Join(unknown, ", "), path)
 	}
 
-	out := &existingConfig{vars: map[string]any{}}
+	out := &existingConfig{vars: map[string]any{}, inline: map[string]any{}}
+	for _, key := range []string{"installs", "servers"} {
+		if value, ok := raw[key]; ok {
+			out.inline[key] = value
+		}
+	}
+	if len(out.inline) > 0 {
+		if _, _, err := config.LoadRepoConfig(path); err != nil {
+			return nil, err
+		}
+	}
 
 	if v, ok := raw["profiles"]; ok {
 		list, err := stringArray(v)
@@ -252,6 +267,7 @@ func parseExisting(path string) (*existingConfig, error) {
 	}
 
 	if v, ok := raw["agents"]; ok {
+		out.agentsDeclared = true
 		list, err := stringArray(v)
 		if err != nil {
 			return nil, fmt.Errorf("%s: \"agents\" must be an array of strings in repo config: %s", config.Prog, path)
@@ -329,7 +345,31 @@ func isVarsValue(v any) bool {
 
 // --- rendering ---------------------------------------------------------------
 
-func renderContent(profiles, names, agents []string, mode string, vars map[string]any) string {
+// renderMerged is shared by init and add so both preserve inline definitions
+// and explicit empty agent selections without expanding relative paths/secrets.
+func renderMerged(path string, existing *existingConfig, profiles, names, agents []string, mode string, vars map[string]any) (string, error) {
+	agentsDeclared := len(agents) > 0 || (existing != nil && existing.agentsDeclared)
+	if existing == nil || len(existing.inline) == 0 {
+		return renderContent(profiles, names, agents, agentsDeclared, mode, vars), nil
+	}
+	// Encode all tables together so empty installs/servers arrays remain
+	// top-level keys rather than accidentally becoming members of [vars].
+	content := renderContent(profiles, names, agents, agentsDeclared, mode, nil)
+	tables := map[string]any{}
+	for k, v := range existing.inline {
+		tables[k] = v
+	}
+	if len(vars) > 0 {
+		tables["vars"] = vars
+	}
+	var b strings.Builder
+	if err := toml.NewEncoder(&b).Encode(tables); err != nil {
+		return "", fmt.Errorf("%s: cannot encode inline definitions in %s: %v", config.Prog, path, err)
+	}
+	return content + "\n" + b.String(), nil
+}
+
+func renderContent(profiles, names, agents []string, agentsDeclared bool, mode string, vars map[string]any) string {
 	var b strings.Builder
 	b.WriteString("# Managed by agent-env init. profiles/names select which skill groups\n")
 	b.WriteString("# and individual entries agent-env installs into this repo. Safe to edit by hand.\n")
@@ -340,7 +380,7 @@ func renderContent(profiles, names, agents []string, mode string, vars map[strin
 	if len(names) > 0 {
 		b.WriteString("names = " + tomlArray(names) + "\n")
 	}
-	if len(agents) > 0 {
+	if agentsDeclared {
 		b.WriteString("agents = " + tomlArray(agents) + "\n")
 	}
 	if mode != "" {
@@ -536,7 +576,8 @@ func MergeNames(path string, names []string) (content string, finalNames []strin
 	final = appendUniqueItems(final, names)
 	changed = strings.Join(final, "\x00") != before
 
-	return renderContent(profiles, final, agents, mode, vars), final, existed, changed, nil
+	content, err = renderMerged(path, existing, profiles, final, agents, mode, vars)
+	return content, final, existed, changed, err
 }
 
 // WriteAtomic replaces path with content via a temp file in the same

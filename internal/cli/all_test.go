@@ -99,6 +99,47 @@ func (f *allFixture) npxCalls(t *testing.T) int {
 	return strings.Count(s, "\n") + 1
 }
 
+func TestAllInOneStandaloneInlineConfig(t *testing.T) {
+	for _, domain := range []string{"skills", "mcp", "both"} {
+		t.Run(domain, func(t *testing.T) {
+			f := newAllFixture(t)
+			body := "agents = [\"codex\"]\n"
+			if domain != "mcp" {
+				body += "[[installs]]\nsource = \"example/local\"\nskills = [\"local-skill\"]\n"
+			}
+			if domain != "skills" {
+				body += "[[servers]]\nname = \"local-mcp\"\ncommand = \"local-command\"\n"
+			}
+			if err := os.WriteFile(f.sOpts.RepoConfigPath, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sErr, mErr := runAll(sharedFilters{
+				command: skills.CmdApply, nonInteractive: true,
+				agents: []string{"codex"}, agentSeen: true,
+			}, f.sOpts, f.mOpts)
+			if sErr != nil || mErr != nil {
+				t.Fatalf("standalone inline config: skills=%v mcp=%v", sErr, mErr)
+			}
+			wantCalls := 1
+			if domain == "mcp" {
+				wantCalls = 0
+			}
+			if got := f.npxCalls(t); got != wantCalls {
+				t.Fatalf("npx calls = %d, want %d", got, wantCalls)
+			}
+			if domain != "skills" {
+				data, err := os.ReadFile(filepath.Join(f.dir, ".codex", "config.toml"))
+				if err != nil || !strings.Contains(string(data), "local-mcp") {
+					t.Fatalf("missing project MCP config: %s %v", data, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(f.home, ".codex", "config.toml")); !os.IsNotExist(err) {
+				t.Fatalf("inline-only sync must not create a user config: %v", err)
+			}
+		})
+	}
+}
+
 func TestAllInOneBothDomainsExecute(t *testing.T) {
 	f := newAllFixture(t)
 	f.writeManifest(t, `

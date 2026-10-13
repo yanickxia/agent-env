@@ -59,7 +59,7 @@ func TestLoadRepoConfigErrors(t *testing.T) {
 		{
 			name: "unknown key",
 			body: "profiles = [\"base\"]\nsource = \"evil\"\n",
-			want: "only allows agents, mode, names, profiles, vars; found source",
+			want: "only allows agents, installs, mode, names, profiles, servers, vars; found source",
 		},
 		{
 			name: "non kebab",

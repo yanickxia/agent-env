@@ -10,9 +10,8 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// RepoConfig is a validated .agent-env.toml. It can only *select* profiles and
-// agents; install details and hooks are rejected on purpose so a checked-in
-// repo config can never execute code.
+// RepoConfig is a validated .agent-env.toml: shared selections plus optional
+// inline project-only definitions. Inline hooks and global scope are rejected.
 type RepoConfig struct {
 	Path     string
 	Profiles []string
@@ -23,13 +22,15 @@ type RepoConfig struct {
 	AgentsDeclared bool
 	Mode           string
 	Vars           map[string]any
+	Installs       []Install
+	Servers        []Server
 }
 
 // LoadRepoConfig reads and validates path. found=false means the file is
 // absent (callers decide whether that is fatal); any invalid content returns
 // an error so a repo selection is never half-applied.
 func LoadRepoConfig(path string) (cfg *RepoConfig, found bool, err error) {
-	return LoadRepoConfigWithHint(path, "install details and hooks belong in the global manifest")
+	return LoadRepoConfigWithHint(path, "use [[installs]] / [[servers]] for project-only definitions; hooks belong in the global manifest")
 }
 
 // LoadRepoConfigWithHint is LoadRepoConfig with a domain-specific suffix for
@@ -45,14 +46,15 @@ func LoadRepoConfigWithHint(path, unknownKeyHint string) (cfg *RepoConfig, found
 	}
 
 	var raw map[string]any
-	if _, err := toml.Decode(string(data), &raw); err != nil {
+	md, err := toml.Decode(string(data), &raw)
+	if err != nil {
 		return nil, false, fmt.Errorf("%s: repo config is not valid TOML: %s: %v", Prog, path, err)
 	}
 
-	allowed := []string{"agents", "mode", "names", "profiles", "vars"}
+	allowed := []string{"agents", "installs", "mode", "names", "profiles", "servers", "vars"}
 	unknown := []string{}
 	for k := range raw {
-		if k != "profiles" && k != "names" && k != "agents" && k != "mode" && k != "vars" {
+		if k != "profiles" && k != "names" && k != "agents" && k != "mode" && k != "vars" && k != "installs" && k != "servers" {
 			unknown = append(unknown, k)
 		}
 	}
@@ -114,7 +116,7 @@ func LoadRepoConfigWithHint(path, unknownKeyHint string) (cfg *RepoConfig, found
 		vars = tbl
 	}
 
-	return &RepoConfig{
+	cfg = &RepoConfig{
 		Path:           path,
 		Profiles:       profiles,
 		Names:          names,
@@ -122,7 +124,11 @@ func LoadRepoConfigWithHint(path, unknownKeyHint string) (cfg *RepoConfig, found
 		AgentsDeclared: agentsPresent,
 		Mode:           mode,
 		Vars:           vars,
-	}, true, nil
+	}
+	if err := cfg.loadInlineEntries(raw, md); err != nil {
+		return nil, false, fmt.Errorf("%w (repo config: %s)", err, path)
+	}
+	return cfg, true, nil
 }
 
 // normalizeStringList mirrors the zsh repo-config helper: nil -> [], a bare
@@ -232,12 +238,15 @@ func WalkRepoConfigs(startDir, hint string) ([]*RepoConfig, []string, error) {
 
 // MergeRepoConfigs overlays layers nearest-first: profiles are unioned with
 // nearest priority, agents/mode use the nearest declaring layer, and vars are
-// merged per key with nearest override.
+// merged per key with nearest override. Named inline entries use nearest
+// whole-entry override; unnamed installs accumulate.
 func MergeRepoConfigs(configs []*RepoConfig) *RepoConfig {
 	merged := &RepoConfig{Vars: map[string]any{}}
 	seenProfiles := map[string]bool{}
 	seenNames := map[string]bool{}
 	for _, cfg := range configs {
+		merged.Installs = MergeInstalls(merged.Installs, cfg.Installs)
+		merged.Servers = MergeServers(merged.Servers, cfg.Servers)
 		for _, p := range cfg.Profiles {
 			if !seenProfiles[p] {
 				seenProfiles[p] = true
