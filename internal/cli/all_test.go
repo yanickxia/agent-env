@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/yanickxia/agent-env/internal/mcp"
 	"github.com/yanickxia/agent-env/internal/skills"
 )
@@ -425,5 +426,29 @@ func TestAllInOneHasForceFlag(t *testing.T) {
 	cmd := newAllCmd("apply", "test")
 	if cmd.Flags().Lookup("force") == nil {
 		t.Fatal("all-in-one apply must expose --force")
+	}
+}
+
+func TestAllowHooksFlagIsSharedByAllInOneAndSkills(t *testing.T) {
+	all := newAllCmd("apply", "test")
+	flag := all.Flags().Lookup("allow-hooks")
+	if flag == nil || flag.Value.Type() != "bool" || flag.DefValue != "false" {
+		t.Fatalf("all-in-one apply must expose a default-off --allow-hooks bool, got %+v", flag)
+	}
+	if !(&allFlags{allowHK: true}).toShared(all, skills.CmdApply).allowHooks || (&allFlags{}).toShared(all, skills.CmdApply).allowHooks {
+		t.Fatal("--allow-hooks must reach the skills domain from the all-in-one command")
+	}
+
+	var sub *cobra.Command
+	for _, c := range newSkillsCmd().Commands() {
+		if c.Name() == "apply" || c.Name() == "dry-run" {
+			if flag := c.Flags().Lookup("allow-hooks"); flag == nil || flag.DefValue != "false" {
+				t.Fatalf("skills %s must expose a default-off --allow-hooks: %+v", c.Name(), flag)
+			}
+			sub = c
+		}
+	}
+	if !(&filterFlags{allowHK: true}).toFilters(sub, skills.CmdDryRun).AllowHooks || (&filterFlags{}).toFilters(sub, skills.CmdDryRun).AllowHooks {
+		t.Fatal("--allow-hooks must reach skills.Filters from the skills subcommand")
 	}
 }

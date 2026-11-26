@@ -24,6 +24,7 @@ type allFlags struct {
 	noRepo   bool
 	force    bool
 	prune    bool
+	allowHK  bool
 }
 
 func addAllFlags(cmd *cobra.Command, f *allFlags) {
@@ -38,6 +39,7 @@ func addAllFlags(cmd *cobra.Command, f *allFlags) {
 	fl.BoolVar(&f.force, "force", false, "skills only: reinstall the entries owned by the current context even when stamps match (repo-level in a repo run, global with --no-repo; repairs interrupted installs); overrides --skip-unchanged, ignored by MCP")
 	fl.BoolVar(&f.prune, "prune", false, "skills only: after apply/dry-run, clean up stamped installs whose source is no longer active (repo-level in a repo run, global with --no-repo); manual installs are never touched. Ignored by MCP, whose managed regions are already fully replaced")
 	fl.BoolVar(&f.noRepo, "no-repo", false, "no repo context: skip .agent-env.toml discovery and install global entries only (mutually exclusive with --profile)")
+	fl.BoolVar(&f.allowHK, "allow-hooks", false, "skills only: run post_install hooks declared inline in .agent-env.toml (repo and ancestor directories); hooks from the global manifest always run. Ignored by MCP")
 }
 
 // sharedFilters is the normalized, domain-neutral filter set passed to both
@@ -53,6 +55,7 @@ type sharedFilters struct {
 	noRepo         bool
 	force          bool
 	prune          bool
+	allowHooks     bool
 }
 
 func (f *allFlags) toShared(cmd *cobra.Command, command string) sharedFilters {
@@ -67,6 +70,7 @@ func (f *allFlags) toShared(cmd *cobra.Command, command string) sharedFilters {
 		noRepo:         f.noRepo,
 		force:          f.force,
 		prune:          f.prune,
+		allowHooks:     f.allowHK,
 	}
 }
 
@@ -91,6 +95,7 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 		NonInteractive: sf.nonInteractive,
 		SkipUnchanged:  sf.skipUnchanged,
 		NoRepo:         sf.noRepo,
+		AllowHooks:     sf.allowHooks,
 	})
 
 	fmt.Fprintln(out, "=== mcp ===")
@@ -110,12 +115,12 @@ func runAll(sf sharedFilters, sOpts skills.Options, mOpts mcp.Options) (skillsEr
 func newAllCmd(command, short string) *cobra.Command {
 	var f allFlags
 	c := &cobra.Command{
-		Use:   command + " [--agent AGENT]... [--profile PROFILE]... [--non-interactive] [--skip-unchanged] [--force] [--prune] [--no-repo]",
+		Use:   command + " [--agent AGENT]... [--profile PROFILE]... [--non-interactive] [--skip-unchanged] [--force] [--prune] [--no-repo] [--allow-hooks]",
 		Short: short,
 		Long: "Run both domains in one shot: skills first, then MCP. Both domains always run,\n" +
 			"even when the first one fails; the exit code is non-zero when either fails.\n\n" +
 			"Only flags shared by both domains are accepted here. --skip-unchanged, --force\n" +
-			"and --prune are passed to skills and ignored by MCP (MCP's managed regions are\n" +
+			"--prune and --allow-hooks are passed to skills and ignored by MCP (MCP's managed regions are\n" +
 			"already fully replaced on every apply, so no prune is needed). Domain-specific\n" +
 			"filters such as --skill or --name live only on the `skills` / `mcp` subcommands.",
 		Args: cobra.NoArgs,

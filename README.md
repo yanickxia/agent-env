@@ -128,12 +128,12 @@ agent-env skills|mcp add NAME... [--dry-run]  # 按名单条安装（记录 + �
 顶层 `apply` / `dry-run` 只接受两域**共享**的 flags：
 
 ```sh
-agent-env apply    [--agent A]... [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--force] [--prune] [--no-repo]
+agent-env apply    [--agent A]... [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--force] [--prune] [--no-repo] [--allow-hooks]
 agent-env dry-run  [同上 flags]
 ```
 
 - 语义：先跑 skills、再跑 MCP，**两者都执行**（即使第一个失败也继续第二个）；输出以 `=== skills ===` / `=== mcp ===` 分隔；最终 exit code = 任一非零则非零。
-- `--skip-unchanged`/`--force`/`--prune` 只传给 skills，MCP 忽略（MCP 的托管区域每次 apply 都整体重写，天然一致，无需 prune）。
+- `--skip-unchanged`/`--force`/`--prune`/`--allow-hooks` 只传给 skills，MCP 忽略（MCP 的托管区域每次 apply 都整体重写，天然一致，无需 prune）。
 - `--skill` / `--name` 等域专属 flag 不在顶层定义，cobra 会将其视为未知 flag 拒绝；需要时用对应的 `skills` / `mcp` 子命令。
 - `apply` 必须带 `--non-interactive`（未提供交互选择）。
 - `--no-repo` 表示**无 repo 上下文**：跳过 `.agent-env.toml` 逐级发现（也不读 `AGENT_ENV_REPO_CONFIG`/显式路径），只装全局条目，静默排除 repo 级条目（不打印跳过提示）；与 `--profile`/`--profiles` 互斥。chezmoi 全局钩子从 `$HOME` 运行时使用它，避免祖先目录意外出现 `.agent-env.toml` 时把 repo 级条目装进全局。
@@ -142,7 +142,7 @@ agent-env dry-run  [同上 flags]
 ### skills
 
 ```sh
-agent-env skills apply    [--agent A]... [--skill S]... [--skills a,b] [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--force] [--prune] [--no-repo]
+agent-env skills apply    [--agent A]... [--skill S]... [--skills a,b] [--profile P]... [--profiles a,b] [--non-interactive] [--skip-unchanged] [--force] [--prune] [--no-repo] [--allow-hooks]
 agent-env skills dry-run  [同上 flags]
 agent-env skills list                     # 打印 config.toml 原文
 agent-env skills profiles                 # 列出可声明的 profiles（排序去重，排除保留字 global；无则 rc=1）
@@ -162,7 +162,8 @@ agent-env skills add NAME... [--dry-run]                     # 记录 + 安装�
   - lock 无该 source 记录（从未记录 / 被清过 / 文件不存在）→ 只删 stamp 行，目录无法可靠定位则不删。
   - lock 文件属 skills CLI，agent-env **只读不改**；残留 lock 条目可用 `npx skills remove` 清理。
   - `dry-run --prune` 只打印 `would prune: ...` 清单，不删目录、不动 stamp；实跑打印 `pruned: ...` + 汇总；无过期时打印 `nothing to prune`。`--prune` 与 `--force` 可组合（force 重装活跃集 + prune 清理过期集）。剪枝后仍以完整清单的活跃集为准：`--agent`/`--skill` 只收窄安装集，不会让未重装的活跃条目被误判为过期而删除。
-- 只读命令 `resolve`/`status` 需要 repo 配置或 `--profile`，且拒绝 `--skill`/`--skills`、`--skip-unchanged`、`--force`、`--prune`；`profiles`/`list` 拒绝一切过滤器。
+- **`--allow-hooks` 执行内联 post_install**：`.agent-env.toml`（含祖先目录）里声明的 `post_install` 默认跳过并提示，加此 flag 才执行；全局清单的 hook 不受影响。详见「post_install：补装依赖 CLI」。
+- 只读命令 `resolve`/`status` 需要 repo 配置或 `--profile`，且拒绝 `--skill`/`--skills`、`--skip-unchanged`、`--force`、`--prune`、`--allow-hooks`；`profiles`/`list` 拒绝一切过滤器。
 - `list` 只读 `[[installs]]`，忽略 `[[servers]]`。
 
 #### 分发机制（npx skills）
@@ -324,11 +325,21 @@ name = "project-tools"
 command = "./bin/project-mcp"
 args = ["--stdio"]
 env = { API_KEY = "${PROJECT_API_KEY}" }
+
+# 补装该 repo 的 skills 所依赖的 CLI（默认跳过，apply 时加 --allow-hooks 才执行；见下节）
+[[installs]]
+name = "agent-clis"
+source = "./skills"
+skills = ["*"]
+post_install = [
+  { run = "npm install -g @anthropic-ai/claude-code", if_missing = "claude" },
+]
 ```
 
 ```sh
 agent-env dry-run                     # 预览 skills 安装命令与 MCP 配置
-agent-env apply --non-interactive      # 安装到当前项目
+agent-env apply --non-interactive      # 安装到当前项目（内联 post_install 默认跳过）
+agent-env apply --non-interactive --allow-hooks   # 审查过配置后，连同内联 post_install 一起执行
 agent-env skills resolve              # 包含内联 skills 及其定义文件路径
 ```
 
@@ -339,7 +350,31 @@ agent-env skills resolve              # 包含内联 skills 及其定义文件�
 - **与现有命令兼容**：`ls --declared` 会展示内联条目；skills 的 `--force` / `--prune` 将它们视为项目级声明，不会误清理仍在使用的内联 skills。`init` 和按名称 `add` 更新选择器时都会保留内联定义（`add NAME` 本身仍从全局清单查找名称）。
 - **路径与密钥**：skills 的 `source`、MCP 的 `command` 若以 `./` / `../` 开头（或是 `.` / `..`），相对于定义它的 `.agent-env.toml` 解析；MCP `args` 保留原样。`${VAR}` 在 MCP `url` / `args` / `env` / `headers` 中沿用 secrets.toml → 环境变量的解析规则。不要把明文 token 提交到仓库。
 - **独立使用**：有内联定义时，可以没有全局 config.toml，也可以缺少全局清单中的某一个域；顶层 apply/dry-run 都能运行。若没有全局 `servers` 表，不会改动已有的用户级 MCP 配置；显式的全局 `servers = []` 则仍表示清理全局托管配置。`list` / `profiles` / `mcp upsert-stdin` 仍只读取全局清单。
-- **安全边界**：目录配置禁止 `profiles = ["global"]`、`scope` 和 `post_install` hook；但内联 skills 来源和 MCP 命令本身需要信任。执行 apply 前应审查仓库及祖先目录的配置，建议先 dry-run。
+- **安全边界**：目录配置禁止 `profiles = ["global"]` 与 `scope`；内联 skills 来源和 MCP 命令本身需要信任（npx 会下载并安装 skill 内容，MCP 命令会被 agent 启动）。内联条目的 `post_install` 是唯一在 **apply 时同步执行**任意命令的字段，因此默认跳过，需显式 `--allow-hooks`（见下节）。执行 apply 前应审查仓库及祖先目录的配置，建议先 dry-run。
+
+### post_install：补装依赖 CLI
+
+`[[installs]]` 条目（全局清单与 `.agent-env.toml` 内联条目语法相同）可声明安装后钩子，用于补装该 skill 依赖的 CLI：
+
+```toml
+[[installs]]
+source = "krodak/clickup-cli"
+name = "clickup"
+agents = ["claude-code", "codex", "opencode"]
+skills = ["clickup"]
+mode = "symlink"
+post_install = [
+  "npm install -g @krodak/clickup-cli",                                      # 字符串 = 仅 run
+  { run = "npm install -g @krodak/clickup-cli", if_missing = "cup" },        # 推荐：缺才装
+]
+```
+
+- **语义**：`run` 必填（一行 shell 命令，不能含 tab/换行）；`if_missing` 可选，PATH 上能找到该命令就跳过。在该条目的 `npx skills add` 之后立即执行（dry-run 只打印）；同一 source + 同一 hook 集合在一次运行里只执行一次，被 stamp 跳过的条目仍会检查，所以配了 `if_missing` 的 hook 是幂等的。任一 hook 非零退出 → 打印 `post_install failed`，本次 apply 最终以 `N post_install hook(s) failed` 非零退出，其余条目照常继续。hook 不参与 stamp 签名。
+- **shell**：hook 以 `-c` 交给 PATH 上第一个可用的 shell：`zsh` → `bash` → `sh`（有 zsh 的机器沿用历史行为；Debian 等无 zsh 的机器走 bash/sh）。dry-run 打印的 `<shell> -c ...` 就是实际使用的 shell。**请把 hook 写成 POSIX sh**：三处都能跑；zsh 专有语法（`${(j:, :)arr}`、`setopt`、`=cmd` 等）落到 bash/sh 会以语法错误失败并计为失败，bash 扩展（`[[ ]]`、数组）在 bash 下能跑、落到 dash 实现的 `sh` 会失败。三者都没有时 hook 不执行：dry-run 打印 `cannot run without a shell`，apply 计为失败并在 stderr 提示。
+- **信任边界**：post_install 在 apply 时以你的身份执行任意命令。全局 `~/.config/agent-env/config.toml` 是你自己（chezmoi）维护的文件，其 hook **始终执行**；而 `.agent-env.toml` 来自被 clone 的仓库以及逐级向上的祖先目录——一个被篡改的依赖仓库、或目录树里一个放错位置的祖先配置，都可能借一次普通的 `agent-env apply` 执行任意命令。因此内联条目的 hook：
+  - 默认**不执行**。dry-run/apply 都打印 `# post_install: skipped (declared in <path>; pass --allow-hooks to run): <命令>`，结束时 stderr 汇总 `N post_install hook(s) from .agent-env.toml skipped`；apply 退出码仍为 0。
+  - 审查过仓库（及祖先目录）的 `.agent-env.toml` 后，用 `agent-env apply --non-interactive --allow-hooks` 显式授权。flag 只对本次运行生效、不写任何状态（不会“信任一次、永久信任”）；`resolve` / `status` / `list` / `profiles` 拒绝它；`--no-repo` 不读目录配置，自然也没有内联 hook。`[[servers]]` 不支持 `post_install`。
+  - 取舍：内联 `source` / `command` 本来就要求信任该仓库，但 post_install 是唯一在 apply 时同步执行的字段，危害路径更直接，所以给它单独的显式开关——既保留“clone 后一条命令恢复”（把 `--allow-hooks` 写进恢复命令即可），也不让未经授权的目录配置悄悄执行命令。
 
 ## 层级配置（mise 式发现）
 
@@ -396,7 +431,7 @@ names    = ["playwright"]       # 个体点名（越过分组）
 
 ## 统一配置、secrets 与脱敏
 
-`config.toml` 一个文件两个顶层表：`[[installs]]`（skills）与 `[[servers]]`（MCP）；两个域各取所需、互相忽略。`.agent-env.toml` 的内联定义复用这些字段，但禁止 `global`、`scope` 与 `post_install`，并校验两个域的定义。关键字段：
+`config.toml` 一个文件两个顶层表：`[[installs]]`（skills）与 `[[servers]]`（MCP）；两个域各取所需、互相忽略。`.agent-env.toml` 的内联定义复用这些字段，但禁止 `global` 与 `scope`（`post_install` 需 `--allow-hooks` 才执行），并校验两个域的定义。关键字段：
 
 - `[[installs]]`：`source`(必填)、`name`(可选，kebab-case，跨 installs 唯一；供 repo `names` 点名)、`agents`、`skills`（`["*"]`=全部）、`profiles`(可选；缺省/空 = 游离)、`mode`、`post_install`、`installer`（仅 `skills`）、`env`。
 - `[[servers]]`：`name`(必填)、`type`（`stdio`/`streamable-http`，另兼容 `sse`）、`command`、`args`、`url`、`env`、`headers`、`env_vars`、`bearer_token_env_var`、`profiles`(可选；缺省/空 = 游离)、`startup_timeout_sec`。
@@ -454,7 +489,7 @@ dry-run 脱敏：**来自 secrets.toml 的所有值出现即替换为 `***redact
 go test ./...
 ```
 
-table-driven Go 测试覆盖：manifest/repo config 校验矩阵（含 global 保留字、scope 字段拒绝）、全局条目无选择照装、repo 级无选择两域都跳过、profile 选择/交集/agents 收窄、stamp 签名与真实状态文件字节兼容、installer 命令构造、claude symlink 特例、skip-unchanged 全流程、`--prune` 矩阵（全局/repo 剪枝、手工安装保护、同名保护、dry-run 只列表、lock 缺失、force 组合、只读拒绝）、MCP `${VAR}`/脱敏、三渲染器 marker 语义、claude 保序 patch、upsert-stdin 与 apply 字节等价、aiden 命令构造、init 新建/合并/apply 透传、顶层 all-in-one 双域执行/失败聚合/flag 透传、`ls` 门禁矩阵（profile/name/agents 与 apply 一致、三格式 MCP 解析、wildcard lock 反查、stale/not-installed 注解、provider 过滤与别名）。
+table-driven Go 测试覆盖：manifest/repo config 校验矩阵（含 global 保留字、scope 字段拒绝）、全局条目无选择照装、repo 级无选择两域都跳过、profile 选择/交集/agents 收窄、stamp 签名与真实状态文件字节兼容、installer 命令构造、claude symlink 特例、skip-unchanged 全流程、`--prune` 矩阵（全局/repo 剪枝、手工安装保护、同名保护、dry-run 只列表、lock 缺失、force 组合、只读拒绝）、MCP `${VAR}`/脱敏、三渲染器 marker 语义、claude 保序 patch、upsert-stdin 与 apply 字节等价、aiden 命令构造、init 新建/合并/apply 透传、post_install 的 shell 选择（zsh→bash→sh、无 shell、if_missing 守卫）与内联 hook 的 `--allow-hooks` 门禁、顶层 all-in-one 双域执行/失败聚合/flag 透传、`ls` 门禁矩阵（profile/name/agents 与 apply 一致、三格式 MCP 解析、wildcard lock 反查、stale/not-installed 注解、provider 过滤与别名）。
 
 ## 文件布局
 

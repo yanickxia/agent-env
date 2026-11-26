@@ -253,7 +253,7 @@ func (r *runner) loadRepo() error {
 	}
 	cfg, layers, found, err := config.LoadRepoSelection(
 		explicit, start, r.getenv,
-		"use [[installs]] / [[servers]] for project-only definitions; hooks belong in the global manifest")
+		"use [[installs]] / [[servers]] for project-only definitions; inline post_install hooks (skills only) run only with --allow-hooks")
 	if err != nil {
 		return err
 	}

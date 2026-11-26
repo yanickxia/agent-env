@@ -66,7 +66,8 @@ func TestInlineEntriesValidation(t *testing.T) {
 		{"install global", "[[installs]]\nsource = \"x/y\"\nprofiles = [\"base\", \"global\"]", "project-only"},
 		{"server global", "[[servers]]\nname = \"local\"\nprofiles = [\"global\"]", "project-only"},
 		{"server profile", "[[servers]]\nname = \"local\"\nprofiles = [\"Bad_Profile\"]", "kebab-case"},
-		{"hooks", "[[installs]]\nsource = \"x/y\"\npost_install = [\"echo nope\"]", "post_install"},
+		{"post_install unknown key", "[[installs]]\nsource = \"x/y\"\npost_install = [{ run = \"x\", extra = \"y\" }]", "unknown post_install key"},
+		{"server hooks", "[[servers]]\nname = \"local\"\ncommand = \"mcp\"\npost_install = [\"echo nope\"]", "post_install"},
 		{"scope", "[[servers]]\nname = \"local\"\nscope = \"user\"", "scope"},
 		{"unknown", "[[servers]]\nname = \"local\"\ncommmand = \"typo\"", "commmand"},
 		{"mode", "[[installs]]\nsource = \"x/y\"\nmode = \"bad\"", "mode must be"},
@@ -80,6 +81,31 @@ func TestInlineEntriesValidation(t *testing.T) {
 				t.Fatalf("want %q and path, got %v", tc.want, err)
 			}
 		})
+	}
+}
+
+func TestInlinePostInstallAccepted(t *testing.T) {
+	path := writeRepo(t, `
+[[installs]]
+source = "./local"
+post_install = ["npm install -g x", { run = "npm install -g y", if_missing = "y" }]
+`)
+	cfg, _, err := LoadRepoConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installs, err := LoadProjectInstalls(filepath.Join(t.TempDir(), "absent.toml"), cfg)
+	if err != nil || len(installs) != 1 || installs[0].RepoPath != path {
+		t.Fatalf("installs=%+v err=%v", installs, err)
+	}
+	hooks := installs[0].PostInstall
+	if len(hooks) != 2 || hooks[0] != (PostInstall{Run: "npm install -g x"}) || hooks[1] != (PostInstall{Run: "npm install -g y", IfMissing: "y"}) {
+		t.Fatalf("inline post_install must parse with the manifest syntax: %+v", hooks)
+	}
+	// Hooks are not part of the stamp signature: changing them must not
+	// invalidate an unchanged inline install.
+	if _, _, err := LoadRepoConfig(writeRepo(t, "[[installs]]\nsource = \"./local\"\npost_install = \"x\"")); err == nil || !strings.Contains(err.Error(), `"post_install" must be an array`) {
+		t.Fatalf("shared parser must still validate inline hooks: %v", err)
 	}
 }
 

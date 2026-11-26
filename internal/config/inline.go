@@ -21,7 +21,7 @@ func (c *RepoConfig) loadInlineEntries(raw map[string]any, md toml.MetaData) err
 		return err
 	}
 	if val, ok := raw["installs"]; ok {
-		if err := validateInlineKeys(val, "installs", path, "source name agents skills mode profiles installer env"); err != nil {
+		if err := validateInlineKeys(val, "installs", path, "source name agents skills mode profiles post_install installer env"); err != nil {
 			return err
 		}
 		entries, err := parseInstalls(val, path)
@@ -85,7 +85,7 @@ func validateInlineKeys(value any, table, path, supported string) error {
 		}
 		if len(unknown) > 0 {
 			sort.Strings(unknown)
-			return fmt.Errorf("%s: inline [[%s]] key(s) not allowed: %s in %s (project-only definitions; post_install hooks and scope are not permitted)", Prog, table, strings.Join(unknown, ", "), path)
+			return fmt.Errorf("%s: inline [[%s]] key(s) not allowed: %s in %s (project-only definitions; scope is not permitted; post_install is skills-only and gated by --allow-hooks)", Prog, table, strings.Join(unknown, ", "), path)
 		}
 	}
 	return nil

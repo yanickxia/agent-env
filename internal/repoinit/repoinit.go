@@ -218,7 +218,7 @@ func parseExisting(path string) (*existingConfig, error) {
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return nil, fmt.Errorf("%s: repo config key(s) not allowed: %s in %s; repo config may only declare profiles/names/agents/vars/mode/installs/servers (post_install hooks and scope are not permitted)",
+		return nil, fmt.Errorf("%s: repo config key(s) not allowed: %s in %s; repo config may only declare profiles/names/agents/vars/mode/installs/servers (scope is not permitted; inline post_install hooks run only with --allow-hooks)",
 			config.Prog, strings.Join(unknown, ", "), path)
 	}
 

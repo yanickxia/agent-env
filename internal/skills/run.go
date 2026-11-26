@@ -15,7 +15,7 @@ func (r *runner) anyFilterSeen() bool {
 }
 
 func (r *runner) cmdList() error {
-	if r.anyFilterSeen() || r.opts.Force || r.opts.Prune {
+	if r.anyFilterSeen() || r.opts.Force || r.opts.Prune || r.f.AllowHooks {
 		return fmt.Errorf("%s: filters are supported for apply and dry-run, not list", config.Prog)
 	}
 	data, err := os.ReadFile(r.opts.ManifestPath)
@@ -30,7 +30,7 @@ func (r *runner) cmdList() error {
 }
 
 func (r *runner) cmdProfiles() error {
-	if r.anyFilterSeen() || r.opts.Force || r.opts.Prune {
+	if r.anyFilterSeen() || r.opts.Force || r.opts.Prune || r.f.AllowHooks {
 		return fmt.Errorf("%s: filters are supported for apply and dry-run, not profiles", config.Prog)
 	}
 	entries, err := config.ParseManifest(r.opts.ManifestPath)
@@ -123,6 +123,9 @@ func (r *runner) resolveStatusGating() error {
 	if r.opts.Prune {
 		return fmt.Errorf("%s: --prune is an apply flag; it is not supported by resolve/status", config.Prog)
 	}
+	if r.f.AllowHooks {
+		return fmt.Errorf("%s: --allow-hooks is an apply/dry-run flag; resolve/status never run hooks", config.Prog)
+	}
 	return nil
 }
 
@@ -213,7 +216,7 @@ func (r *runner) processManifest(mode string) error {
 			if (r.f.SkipUnchanged || entry.Global) && !(r.opts.Force && forceApplies) {
 				if value, found := store.Lookup(source, stampScope); found && value == entrySig {
 					fmt.Fprintf(r.out, "# skip (unchanged): %s [%s]\n", source, stampScope)
-					r.runPostInstall(mode, source, entry.PostInstall)
+					r.runPostInstall(mode, source, entry)
 					processedCount++
 					continue
 				}
@@ -281,8 +284,12 @@ func (r *runner) processManifest(mode string) error {
 			}
 		}
 
-		r.runPostInstall(mode, source, entry.PostInstall)
+		r.runPostInstall(mode, source, entry)
 		processedCount++
+	}
+
+	if r.postInstallSkipped > 0 {
+		fmt.Fprintf(r.errw, "%s: %d post_install hook(s) from .agent-env.toml skipped; re-run with --allow-hooks to execute them\n", config.Prog, r.postInstallSkipped)
 	}
 
 	if repoLevelSkips > 0 {

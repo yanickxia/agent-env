@@ -176,7 +176,7 @@ func loadRepoSelection(opts Options, noRepo bool) (*config.RepoConfig, []string,
 	}
 	return config.LoadRepoSelection(
 		explicit, start, opts.LookupEnv,
-		"use [[installs]] / [[servers]] for project-only definitions; hooks belong in the global manifest")
+		"use [[installs]] / [[servers]] for project-only definitions; inline post_install hooks (skills only) run only with --allow-hooks")
 }
 
 // --- per-provider rendering --------------------------------------------------

@@ -57,9 +57,10 @@ Repository config schema (only these keys are permitted):
   [vars]                             # optional table of install settings
   team = "ark"                       # string / number / boolean / string array
 
-  Repo config may only SELECT entries for the repository. It must not carry
-  installation details or hooks: keys such as post_install, source or skills
-  are rejected on purpose so a checked-in config cannot run commands.
+  Repo config may only SELECT entries for the repository, with one exception:
+  inline [[installs]] / [[servers]] definitions are allowed and preserved.
+  Inline post_install hooks are accepted but only run with --allow-hooks, so a
+  checked-in config cannot run commands on its own.
 
 Environment:
   AGENT_ENV_REPO_CONFIG   Override the repo config path (full path).

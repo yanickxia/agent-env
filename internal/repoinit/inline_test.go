@@ -20,6 +20,7 @@ source = "./skills"
 name = "local"
 skills = ["one", "two"]
 env = { API_KEY = "${TOKEN}" }
+post_install = ["npm install -g one", { run = "npm install -g two", if_missing = "two" }]
 [[servers]]
 name = "local"
 command = "./bin/mcp"
@@ -72,7 +73,7 @@ command = "mcp"
 }
 
 func TestInitRejectsUnsafeInlineDefinitionsWithoutWriting(t *testing.T) {
-	for _, extra := range []string{`post_install = ["echo unsafe"]`, `profiles = ["global"]`} {
+	for _, extra := range []string{`profiles = ["global"]`, `post_install = [{ run = "x", extra = "y" }]`} {
 		f := newFixture(t)
 		body := "[[installs]]\nsource = \"example/local\"\n" + extra + "\n"
 		if err := os.WriteFile(f.path, []byte(body), 0o644); err != nil {

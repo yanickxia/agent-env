@@ -56,6 +56,11 @@ type Filters struct {
 	Interactive    bool
 	SkipUnchanged  bool
 	NoRepo         bool
+
+	// AllowHooks permits post_install hooks declared inline in a .agent-env.toml
+	// (repo or ancestor directory) to execute. Hooks from the user's own global
+	// manifest always run.
+	AllowHooks bool
 }
 
 type runner struct {
@@ -76,6 +81,15 @@ type runner struct {
 	claudeSkipNoticeShown bool
 	postInstallDone       map[string]bool
 	postInstallFailures   int
+	postInstallSkipped    int
+
+	// hookShellName/hookShellPath memoize the shell chosen to run post_install
+	// hooks (see hookShells); hookShellResolved marks an attempted lookup, so an
+	// empty path means no shell was found.
+	hookShellResolved bool
+	hookShellName     string
+	hookShellPath     string
+	hookShellWarned   bool
 }
 
 // Run executes one skills command. It returns an error whose message is
@@ -196,7 +210,7 @@ func (r *runner) loadRepo() error {
 	}
 	cfg, layers, found, err := config.LoadRepoSelection(
 		explicit, start, os.Getenv,
-		"use [[installs]] / [[servers]] for project-only definitions; hooks belong in the global manifest")
+		"use [[installs]] / [[servers]] for project-only definitions; post_install hooks declared here need --allow-hooks to run")
 	if err != nil {
 		return err
 	}

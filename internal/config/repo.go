@@ -11,7 +11,9 @@ import (
 )
 
 // RepoConfig is a validated .agent-env.toml: shared selections plus optional
-// inline project-only definitions. Inline hooks and global scope are rejected.
+// inline project-only definitions. Inline global scope is rejected; inline
+// post_install hooks are accepted but only executed under --allow-hooks
+// (see internal/skills).
 type RepoConfig struct {
 	Path     string
 	Profiles []string
@@ -30,7 +32,7 @@ type RepoConfig struct {
 // absent (callers decide whether that is fatal); any invalid content returns
 // an error so a repo selection is never half-applied.
 func LoadRepoConfig(path string) (cfg *RepoConfig, found bool, err error) {
-	return LoadRepoConfigWithHint(path, "use [[installs]] / [[servers]] for project-only definitions; hooks belong in the global manifest")
+	return LoadRepoConfigWithHint(path, "use [[installs]] / [[servers]] for project-only definitions; post_install hooks declared here need --allow-hooks to run")
 }
 
 // LoadRepoConfigWithHint is LoadRepoConfig with a domain-specific suffix for
